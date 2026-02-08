@@ -297,84 +297,127 @@
   }
 
   // ============================================
-  // Gemini 适配器（重写 - 修复角色识别和侧边栏误录问题）
+  // Gemini 适配器（修复角色识别 + 侧边栏过滤）
   // ============================================
   class GeminiAdapter {
     constructor() {
       this.messageCache = new Map();
+      this._strategyUsed = '';
       console.log('[AI监控] Gemini适配器已初始化');
+      // 首次加载时探测 DOM 结构
+      setTimeout(() => this._logDomStructure(), 2000);
+    }
+
+    /** 开发辅助：打印 Gemini 页面的 DOM 结构，帮助识别可用选择器 */
+    _logDomStructure() {
+      const main = document.querySelector('main');
+      if (!main) { console.log('[AI监控] Gemini: 未找到 <main>'); return; }
+
+      // 打印 main 直接子元素的标签和类名
+      const children = Array.from(main.querySelectorAll('*')).slice(0, 60);
+      const tags = new Set();
+      children.forEach(el => {
+        const tag = el.tagName.toLowerCase();
+        const cls = el.className && typeof el.className === 'string' ? el.className.split(/\s+/).filter(c => c.length > 2).slice(0, 3).join('.') : '';
+        tags.add(cls ? `${tag}.${cls}` : tag);
+      });
+      console.log('[AI监控] Gemini DOM 标签采样:', Array.from(tags).slice(0, 30).join(', '));
+
+      // 特别检测已知可能的选择器
+      const probes = [
+        'user-query', 'model-response', 'message-content',
+        '[class*="conversation-turn"]', '[class*="turn"]',
+        '[class*="query"]', '[class*="response"]',
+        '[class*="message"]', '[data-message-id]', '[data-message]',
+        'article', '.chat-turn', '.prompt-container'
+      ];
+      probes.forEach(sel => {
+        try {
+          const count = main.querySelectorAll(sel).length;
+          if (count > 0) console.log(`[AI监控] Gemini 选择器 "${sel}": ${count} 个`);
+        } catch(e) {}
+      });
     }
 
     getContainer() {
-      // Gemini: 精准定位对话区域，避免监控侧边栏
-      // Gemini 使用 Angular / Web Components, 对话区在 main 内
-      const candidates = [
-        'div[class*="conversation-container"]',
-        'div[class*="chat-history"]',
-        'div[class*="response-container-content"]',
-        'main'
-      ];
-      for (const sel of candidates) {
-        const el = document.querySelector(sel);
-        if (el) return el;
-      }
+      // Gemini 对话区在 main 内，侧边栏由 isInSidebar() 过滤
       return document.querySelector('main') || document.body;
     }
 
     getMessages() {
       const found = [];
       const seen = new Set();
+      const main = document.querySelector('main');
 
-      // === 策略1: Gemini Web Components（最精确） ===
-      // Gemini 使用 <user-query> 和 <model-response> 自定义元素
-      document.querySelectorAll('user-query, model-response').forEach(el => {
-        if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 5) {
-          seen.add(el);
-          found.push(el);
-        }
-      });
+      // 辅助: 在指定范围内收集匹配元素
+      const collect = (root, selector, minLen) => {
+        if (!root) return 0;
+        let count = 0;
+        root.querySelectorAll(selector).forEach(el => {
+          if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length >= minLen) {
+            seen.add(el);
+            found.push(el);
+            count++;
+          }
+        });
+        return count;
+      };
+
+      // === 策略1: Gemini Web Components ===
+      collect(document, 'user-query, model-response', 5);
       if (found.length > 0) {
+        this._strategyUsed = 'WebComponent';
         console.log('[AI监控] Gemini(策略1-WebComponent)找到', found.length, '条消息');
         return found;
       }
 
-      // === 策略2: 会话轮次容器 ===
-      document.querySelectorAll('.conversation-turn, [class*="turn-content"], [class*="query-content"], [class*="response-content"]').forEach(el => {
-        if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 10) {
-          seen.add(el);
-          found.push(el);
-        }
-      });
+      // === 策略2: 会话轮次 / 查询+响应容器 ===
+      collect(main, '.conversation-turn, [class*="turn-content"], [class*="query-content"], [class*="response-content"], [class*="query-text"], [class*="model-response"]', 10);
       if (found.length > 0) {
+        this._strategyUsed = 'TurnContainer';
         console.log('[AI监控] Gemini(策略2-TurnContainer)找到', found.length, '条消息');
         return found;
       }
 
-      // === 策略3: 从 main 内查找 message-content ===
-      const main = document.querySelector('main');
-      if (main) {
-        main.querySelectorAll('message-content, [class*="message-content"], [data-message-id]').forEach(el => {
-          if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 10) {
-            seen.add(el);
-            found.push(el);
-          }
-        });
-      }
+      // === 策略3: message-content / data属性 ===
+      collect(main, 'message-content, [class*="message-content"], [data-message-id], [data-message]', 10);
       if (found.length > 0) {
+        this._strategyUsed = 'MessageContent';
         console.log('[AI监控] Gemini(策略3-MessageContent)找到', found.length, '条消息');
         return found;
       }
 
-      // === 策略4: 最后回退 - 仅在 main 内用较宽泛选择器 ===
+      // === 策略4: 宽泛回退 — [class*="message"] + article（仅 main 内 + 排除侧边栏） ===
+      // 这是旧版可用的选择器，加上 isInSidebar 过滤来避免侧边栏项
+      collect(main, '[class*="message"], [class*="conversation-turn"], article', 20);
+      if (found.length > 0) {
+        this._strategyUsed = 'BroadFallback';
+        console.log('[AI监控] Gemini(策略4-BroadFallback)找到', found.length, '条消息');
+        return found;
+      }
+
+      // === 策略5: 最宽泛 — main 内所有有实质内容的大文本块 ===
       if (main) {
-        main.querySelectorAll('[data-message], article').forEach(el => {
-          if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 20) {
-            seen.add(el);
-            found.push(el);
+        // 查找 main 内文本长度 > 50 的叶节点容器
+        main.querySelectorAll('div, p, section').forEach(el => {
+          if (seen.has(el) || isInSidebar(el)) return;
+          const text = (el.innerText || '').trim();
+          // 要求足够长的文本，且不是顶层容器（避免抓整个页面）
+          if (text.length > 50 && text.length < 50000 && el.children.length < 20) {
+            // 检查没有被更高层的已收集元素包含
+            let dominated = false;
+            for (const existing of found) {
+              if (existing.contains(el) || el.contains(existing)) { dominated = true; break; }
+            }
+            if (!dominated) {
+              seen.add(el);
+              found.push(el);
+            }
           }
         });
       }
-      console.log('[AI监控] Gemini(策略4-Fallback)找到', found.length, '条消息');
+      this._strategyUsed = 'DeepFallback';
+      console.log('[AI监控] Gemini(策略5-DeepFallback)找到', found.length, '条消息');
       return found;
     }
 
@@ -385,20 +428,40 @@
           if (node.nodeType !== 1) return;
           if (isInSidebar(node)) return;
 
-          // 按优先级检测消息元素
           let msg = null;
-          const selectorPriority = [
+
+          // 按优先级检测
+          const selectors = [
             'user-query', 'model-response',
             'message-content', '[class*="message-content"]',
             '.conversation-turn', '[class*="turn-content"]',
-            '[data-message-id]', '[data-message]'
+            '[data-message-id]', '[data-message]',
+            '[class*="query-text"]', '[class*="model-response"]',
+            '[class*="message"]', 'article'
           ];
 
-          for (const sel of selectorPriority) {
-            if (node.matches && node.matches(sel)) { msg = node; break; }
-            if (node.querySelector) {
-              const child = node.querySelector(sel);
-              if (child) { msg = child; break; }
+          // 先检查节点自身
+          for (const sel of selectors) {
+            try {
+              if (node.matches && node.matches(sel)) { msg = node; break; }
+            } catch(e) {}
+          }
+
+          // 再检查子节点
+          if (!msg && node.querySelector) {
+            for (const sel of selectors) {
+              try {
+                const child = node.querySelector(sel);
+                if (child && !isInSidebar(child)) { msg = child; break; }
+              } catch(e) {}
+            }
+          }
+
+          // 如果都没匹配上，但节点本身有大量文本，也当作消息
+          if (!msg && !isInSidebar(node)) {
+            const text = (node.innerText || '').trim();
+            if (text.length > 50 && text.length < 50000 && node.children.length < 20) {
+              msg = node;
             }
           }
 
@@ -431,51 +494,64 @@
       if (tagName === 'model-response') return 'assistant';
 
       // --- 策略2: 祖先元素的标签名/类名 ---
-      const userAncestor = el.closest(
-        'user-query, [class*="user-query"], [class*="query-content"], ' +
-        '[class*="user-turn"], [class*="user-message"], [data-author-role="user"]'
-      );
-      if (userAncestor) return 'user';
+      try {
+        const userAncestor = el.closest(
+          'user-query, [class*="user-query"], [class*="query-content"], ' +
+          '[class*="query-text"], [class*="user-turn"], [class*="user-message"], ' +
+          '[data-author-role="user"]'
+        );
+        if (userAncestor) return 'user';
 
-      const modelAncestor = el.closest(
-        'model-response, [class*="model-response"], [class*="response-content"], ' +
-        '[class*="model-turn"], [class*="bot-message"], [data-author-role="model"]'
-      );
-      if (modelAncestor) return 'assistant';
+        const modelAncestor = el.closest(
+          'model-response, [class*="model-response"], [class*="response-content"], ' +
+          '[class*="model-turn"], [class*="bot-message"], [data-author-role="model"]'
+        );
+        if (modelAncestor) return 'assistant';
+      } catch(e) {}
 
-      // --- 策略3: 元素自身属性 ---
-      const allAttrs = (
-        (el.getAttribute('class') || '') + ' ' +
-        (el.getAttribute('data-role') || '') + ' ' +
-        (el.getAttribute('data-author-role') || '') + ' ' +
-        (el.getAttribute('data-content-type') || '')
-      ).toLowerCase();
+      // --- 策略3: 元素自身及所有祖先的属性关键字 ---
+      // 遍历自身和最近5层祖先
+      let current = el;
+      for (let depth = 0; depth < 6 && current; depth++) {
+        const allAttrs = (
+          (current.getAttribute && current.getAttribute('class') || '') + ' ' +
+          (current.getAttribute && current.getAttribute('data-role') || '') + ' ' +
+          (current.getAttribute && current.getAttribute('data-author-role') || '') + ' ' +
+          (current.tagName || '')
+        ).toLowerCase();
 
-      if (allAttrs.includes('user') || allAttrs.includes('human') ||
-          allAttrs.includes('query') || allAttrs.includes('prompt')) {
-        return 'user';
+        if (allAttrs.includes('user') || allAttrs.includes('human') ||
+            allAttrs.includes('query') || allAttrs.includes('prompt')) {
+          return 'user';
+        }
+        if (allAttrs.includes('model-response') || allAttrs.includes('bot-message') ||
+            allAttrs.includes('model-turn')) {
+          return 'assistant';
+        }
+        current = current.parentElement;
       }
-      if (allAttrs.includes('model') || allAttrs.includes('assistant') ||
-          allAttrs.includes('response') || allAttrs.includes('bot')) {
-        return 'assistant';
-      }
 
-      // --- 策略4: 检测前一个兄弟元素是否有用户标识图标 ---
+      // --- 策略4: 检测前一个兄弟元素 ---
       const prev = el.previousElementSibling;
       if (prev) {
-        const prevText = (prev.textContent || '').trim().toLowerCase();
         const prevClass = (prev.getAttribute('class') || '').toLowerCase();
-        if (prevText.length < 30 && (prevClass.includes('user') || prevClass.includes('query'))) {
+        if (prevClass.includes('user') || prevClass.includes('query')) {
           return 'user';
         }
       }
 
-      // --- 策略5: 检测是否包含 Gemini 头像/标识 ---
-      // model 回复通常包含 Gemini 星号图标
-      const hasGeminiIcon = el.querySelector('[class*="gemini-icon"], [class*="model-icon"], [class*="sparkle"]');
+      // --- 策略5: Gemini图标/头像检测 ---
+      const hasGeminiIcon = el.querySelector(
+        '[class*="gemini-icon"], [class*="model-icon"], [class*="sparkle"], ' +
+        'img[src*="gemini"], img[src*="bard"]'
+      );
       if (hasGeminiIcon) return 'assistant';
 
-      // 默认为 assistant（Gemini 回复通常更长）
+      // --- 策略6: 对于宽泛回退匹配的元素，用 DOM 位置推测 ---
+      // Gemini 页面中对话交替排列，奇数位置可能是用户，偶数可能是AI
+      // 但这不太可靠，仅作参考log
+      console.log('[AI监控] Gemini角色检测: 无法确定，默认assistant。元素:', el.tagName, el.className?.toString().substring(0, 80));
+
       return 'assistant';
     }
 
@@ -486,7 +562,6 @@
         const role = this._detectRole(el);
 
         const content = (el.innerText || el.textContent || '').trim();
-        // 过滤掉太短的内容（避免捕获按钮文字、标题等）
         if (!content || content.length < 5) return null;
 
         return {
