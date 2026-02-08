@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "AI对话监控助手",
+  "version": "1.3.0",
+  "description": "自动监控和记录您与AI的对话，生成每日学习收获总结",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "alarms",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://chat.openai.com/*",
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://console.anthropic.com/*",
+    "https://copilot.microsoft.com/*",
+    "https://gemini.google.com/*",
+    "https://api.moonshot.cn/*",
+    "https://api.openai.com/*",
+    "https://api.deepseek.com/*",
+    "https://open.bigmodel.cn/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://console.anthropic.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "content/all-in-one.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "action": {
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    }
+  },
+  "options_page": "options/options.html",
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  }
+}

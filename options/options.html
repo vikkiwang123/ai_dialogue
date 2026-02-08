@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI对话监控助手 - 设置</title>
+  <link rel="stylesheet" href="options.css">
+  <link rel="stylesheet" href="../lib/highlight-github.min.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>AI对话监控助手</h1>
+      <p class="subtitle">设置和管理您的对话记录</p>
+    </header>
+
+    <div class="content">
+      <!-- LLM 大模型配置 -->
+      <section class="settings-section highlight-section">
+        <h2>🤖 大模型配置</h2>
+
+        <!-- 供应商选择 -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <label class="setting-label">模型供应商</label>
+            <p class="setting-desc">选择AI总结使用的大模型服务商</p>
+          </div>
+          <select id="llmProvider" class="select-input">
+            <option value="moonshot">Moonshot / Kimi</option>
+            <option value="openai">OpenAI / ChatGPT</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="zhipu">智谱 / GLM</option>
+            <option value="custom">自定义</option>
+          </select>
+        </div>
+
+        <!-- 模型选择 -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <label class="setting-label">模型</label>
+            <p class="setting-desc" id="modelDesc">选择具体模型，上下文越长价格越高</p>
+          </div>
+          <select id="llmModel" class="select-input">
+          </select>
+        </div>
+
+        <!-- API URL（自定义时可编辑） -->
+        <div class="setting-item" id="apiUrlRow">
+          <div class="setting-info">
+            <label class="setting-label">API 地址</label>
+            <p class="setting-desc">大模型的API接口地址</p>
+          </div>
+          <input type="text" id="llmApiUrl" class="text-input api-url-input" placeholder="https://api.example.com/v1/chat/completions" readonly>
+        </div>
+
+        <!-- API Key -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <label class="setting-label">API Key</label>
+            <p class="setting-desc">在供应商官网获取的API密钥</p>
+          </div>
+          <div class="api-key-group">
+            <input type="password" id="llmApiKey" placeholder="sk-..." class="text-input api-key-input">
+            <button class="btn btn-sm btn-toggle-show" id="toggleApiKey" title="显示/隐藏">👁️</button>
+          </div>
+        </div>
+
+        <!-- 生成参数 -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <label class="setting-label">创造性 (Temperature)</label>
+            <p class="setting-desc">0=严谨, 1=创意。推荐0.7</p>
+          </div>
+          <div class="range-group">
+            <input type="range" id="llmTemperature" min="0" max="100" value="70" class="range-input">
+            <span id="temperatureValue" class="range-value">0.7</span>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <label class="setting-label">最大输出长度</label>
+            <p class="setting-desc">AI生成总结的最大token数</p>
+          </div>
+          <input type="number" id="llmMaxTokens" min="500" max="8000" value="2000" class="number-input">
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="setting-actions">
+          <button class="btn btn-primary btn-sm" id="saveLLMConfig">保存配置</button>
+          <button class="btn btn-secondary btn-sm" id="testLLMApi">测试连接</button>
+          <span class="api-test-result" id="apiTestResult"></span>
+        </div>
+      </section>
+
+      <!-- 提示词配置 -->
+      <section class="settings-section">
+        <h2>📝 总结提示词</h2>
+        <p class="section-desc">自定义AI生成总结时使用的系统提示词，可以调整总结的风格和内容</p>
+        <textarea id="llmSystemPrompt" class="textarea-input" rows="10" placeholder="输入系统提示词..."></textarea>
+        <div class="setting-actions">
+          <button class="btn btn-primary btn-sm" id="savePrompt">保存提示词</button>
+          <button class="btn btn-secondary btn-sm" id="resetPrompt">恢复默认</button>
+        </div>
+      </section>
+
+      <!-- 基本设置 -->
+      <section class="settings-section">
+        <h2>基本设置</h2>
+        <div class="setting-item">
+          <div class="setting-info">
+            <label class="setting-label">启用监控</label>
+            <p class="setting-desc">自动监控和记录AI对话</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="enableMonitoring" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <label class="setting-label">数据保留天数</label>
+            <p class="setting-desc">自动删除超过指定天数的数据</p>
+          </div>
+          <input type="number" id="retentionDays" min="7" max="365" value="30" class="number-input">
+        </div>
+      </section>
+
+      <!-- 平台设置 -->
+      <section class="settings-section">
+        <h2>平台设置</h2>
+        <div class="platforms-grid">
+          <div class="platform-item">
+            <label class="platform-label">
+              <input type="checkbox" id="platform-chatgpt" checked>
+              <span>ChatGPT</span>
+            </label>
+          </div>
+          <div class="platform-item">
+            <label class="platform-label">
+              <input type="checkbox" id="platform-claude" checked>
+              <span>Claude</span>
+            </label>
+          </div>
+          <div class="platform-item">
+            <label class="platform-label">
+              <input type="checkbox" id="platform-copilot" checked>
+              <span>Copilot</span>
+            </label>
+          </div>
+          <div class="platform-item">
+            <label class="platform-label">
+              <input type="checkbox" id="platform-gemini" checked>
+              <span>Gemini</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI总结 -->
+      <section class="settings-section">
+        <h2>📝 AI智能总结</h2>
+        <div class="summary-controls">
+          <div class="date-selector">
+            <label>选择日期：</label>
+            <input type="date" id="summaryDate" class="date-input">
+          </div>
+          <button class="btn btn-ai" id="generateAISummary">🤖 生成AI总结</button>
+          <button class="btn btn-secondary btn-sm" id="regenerateAISummary" style="display: none;">🔄 重新生成</button>
+        </div>
+        <div class="ai-summary-result" id="aiSummaryResult" style="display: none;">
+          <div class="ai-summary-content" id="aiSummaryContent"></div>
+        </div>
+      </section>
+
+      <!-- 数据管理 -->
+      <section class="settings-section">
+        <h2>数据管理</h2>
+        <div class="data-stats">
+          <div class="stat-item">
+            <span class="stat-label">总消息数</span>
+            <span class="stat-value" id="totalMessagesCount">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">存储空间</span>
+            <span class="stat-value" id="storageSize">0 KB</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" id="exportData">导出数据</button>
+          <button class="btn btn-danger" id="clearData">清除所有数据</button>
+        </div>
+      </section>
+
+      <!-- 对话历史 -->
+      <section class="settings-section">
+        <h2>对话历史</h2>
+        <div class="date-selector">
+          <label>选择日期：</label>
+          <input type="date" id="dateSelector" class="date-input">
+        </div>
+        <div class="messages-list" id="messagesList">
+          <div class="loading">加载中...</div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      <p>数据存储在本地 | AI总结由大模型API提供</p>
+    </footer>
+  </div>
+
+  <script src="../lib/marked.min.js"></script>
+  <script src="../lib/highlight.min.js"></script>
+  <script src="../lib/mermaid.min.js"></script>
+  <script src="../lib/llm-stream.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

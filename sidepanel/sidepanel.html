@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI对话监控助手</title>
+  <link rel="stylesheet" href="sidepanel.css">
+  <link rel="stylesheet" href="../lib/highlight-github.min.css">
+</head>
+<body>
+  <!-- 顶部标题栏 -->
+  <header class="header">
+    <div class="header-top">
+      <h1>🤖 AI对话监控</h1>
+      <div class="header-actions">
+        <button class="icon-btn" id="refreshBtn" title="刷新数据">🔄</button>
+        <button class="icon-btn" id="settingsBtn" title="设置">⚙️</button>
+      </div>
+    </div>
+    <div class="status-bar">
+      <div class="status" id="status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">监控中</span>
+      </div>
+      <span class="api-badge" id="apiBadge">检查中...</span>
+    </div>
+  </header>
+
+  <!-- 标签页导航 -->
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="dashboard">📊 概览</button>
+    <button class="tab-btn" data-tab="messages">💬 消息</button>
+    <button class="tab-btn" data-tab="summary">🧠 总结</button>
+  </nav>
+
+  <!-- 标签页内容 -->
+  <main class="content">
+
+    <!-- 概览 -->
+    <section class="tab-panel active" id="tab-dashboard">
+      <div class="stats-grid">
+        <div class="stat-card stat-total">
+          <div class="stat-icon">💬</div>
+          <div class="stat-info">
+            <div class="stat-value" id="totalMessages">0</div>
+            <div class="stat-label">总消息</div>
+          </div>
+        </div>
+        <div class="stat-card stat-ai">
+          <div class="stat-icon">🤖</div>
+          <div class="stat-info">
+            <div class="stat-value" id="aiMessages">0</div>
+            <div class="stat-label">AI回复</div>
+          </div>
+        </div>
+        <div class="stat-card stat-user">
+          <div class="stat-icon">👤</div>
+          <div class="stat-info">
+            <div class="stat-value" id="userMessages">0</div>
+            <div class="stat-label">我的消息</div>
+          </div>
+        </div>
+        <div class="stat-card stat-words">
+          <div class="stat-icon">📝</div>
+          <div class="stat-info">
+            <div class="stat-value" id="totalWords">0</div>
+            <div class="stat-label">总字数</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h3>📡 平台分布</h3>
+        <div class="platforms-list" id="platformsList">
+          <div class="empty-hint">暂无数据</div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h3>📅 最近消息</h3>
+        <div class="recent-messages" id="recentMessages">
+          <div class="empty-hint">暂无消息</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 消息列表 -->
+    <section class="tab-panel" id="tab-messages">
+      <div class="messages-toolbar">
+        <input type="date" id="dateSelector" class="date-input">
+        <select id="roleFilter" class="filter-select">
+          <option value="all">全部</option>
+          <option value="user">我的消息</option>
+          <option value="assistant">AI回复</option>
+        </select>
+      </div>
+      <div class="messages-list" id="messagesList">
+        <div class="empty-hint">选择日期查看消息</div>
+      </div>
+    </section>
+
+    <!-- AI总结 -->
+    <section class="tab-panel" id="tab-summary">
+      <div class="summary-toolbar">
+        <input type="date" id="summaryDate" class="date-input">
+        <div class="summary-actions">
+          <button class="btn btn-ai" id="generateSummary">🤖 生成总结</button>
+          <button class="btn btn-outline btn-sm" id="regenerateSummary" style="display: none;">🔄 重新生成</button>
+        </div>
+      </div>
+      <div class="summary-result" id="summaryResult">
+        <div class="empty-hint">
+          <div class="empty-icon">🧠</div>
+          <p>点击「生成总结」让AI分析你今天的对话</p>
+          <p class="empty-sub">需要先配置API Key</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="../lib/marked.min.js"></script>
+  <script src="../lib/highlight.min.js"></script>
+  <script src="../lib/mermaid.min.js"></script>
+  <script src="../lib/llm-stream.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
+

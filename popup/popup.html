@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI对话监控助手</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="../lib/highlight-github.min.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>AI对话监控助手</h1>
+      <div class="status-row">
+        <div class="status" id="status">
+          <span class="status-indicator" id="statusIndicator"></span>
+          <span id="statusText">监控中</span>
+        </div>
+        <span class="api-status" id="apiStatus">检查中...</span>
+      </div>
+    </header>
+
+    <div class="stats-section">
+      <h2>今日统计</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="totalMessages">0</div>
+          <div class="stat-label">总消息数</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="aiMessages">0</div>
+          <div class="stat-label">AI回复</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="userMessages">0</div>
+          <div class="stat-label">我的消息</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="totalWords">0</div>
+          <div class="stat-label">总字数</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="platforms-section">
+      <h3>平台分布</h3>
+      <div class="platforms-list" id="platformsList">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+
+    <div class="actions-section">
+      <button class="btn btn-primary btn-ai" id="generateSummary">🤖 AI智能总结</button>
+      <button class="btn btn-secondary" id="viewAll">查看全部</button>
+      <button class="btn btn-link" id="openOptions">设置</button>
+    </div>
+
+    <div class="summary-section" id="summarySection" style="display: none;">
+      <div class="summary-header">
+        <h3>📝 今日总结</h3>
+        <button class="btn btn-sm btn-regenerate" id="regenerateSummary" style="display: none;">🔄 重新生成</button>
+      </div>
+      <div class="summary-content" id="summaryContent"></div>
+    </div>
+  </div>
+
+  <script src="../lib/marked.min.js"></script>
+  <script src="../lib/highlight.min.js"></script>
+  <script src="../lib/mermaid.min.js"></script>
+  <script src="../lib/llm-stream.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

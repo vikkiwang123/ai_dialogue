@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI对话监控助手 - 调试工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .section h2 {
+            color: #2196f3;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        
+        .step {
+            background: #f9f9f9;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #2196f3;
+            border-radius: 4px;
+        }
+        
+        .step-number {
+            display: inline-block;
+            background: #2196f3;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 24px;
+            font-weight: bold;
+            margin-right: 10px;
+            font-size: 12px;
+        }
+        
+        .code-block {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin: 10px 0;
+            overflow-x: auto;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-left: 4px solid #4caf50;
+        }
+        
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+            border-left: 4px solid #f44336;
+        }
+        
+        .status.info {
+            background: #e3f2fd;
+            color: #1565c0;
+            border-left: 4px solid #2196f3;
+        }
+        
+        .btn {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        
+        .btn:hover {
+            background: #1976d2;
+        }
+        
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .log-area {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+        }
+        
+        .log-entry.error {
+            color: #f44336;
+        }
+        
+        .log-entry.success {
+            color: #4caf50;
+        }
+        
+        .log-entry.info {
+            color: #2196f3;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔍 AI对话监控助手 - 调试工具</h1>
+        <p>帮助您诊断插件工作状态和问题</p>
+    </div>
+    
+    <div class="section">
+        <h2>📋 快速检查清单</h2>
+        
+        <div class="step">
+            <span class="step-number">1</span>
+            <strong>确认插件已安装</strong>
+            <p>在浏览器中访问 <code>chrome://extensions/</code>，确认"AI对话监控助手"已启用</p>
+        </div>
+        
+        <div class="step">
+            <span class="step-number">2</span>
+            <strong>访问AI平台</strong>
+            <p>打开以下任一平台：</p>
+            <ul style="margin-left: 30px; margin-top: 10px;">
+                <li><a href="https://chat.openai.com" target="_blank">ChatGPT</a>（推荐，最稳定）</li>
+                <li><a href="https://gemini.google.com" target="_blank">Gemini</a></li>
+                <li><a href="https://claude.ai" target="_blank">Claude</a></li>
+            </ul>
+        </div>
+        
+        <div class="step">
+            <span class="step-number">3</span>
+            <strong>打开开发者工具</strong>
+            <p>按 <code>F12</code> 或右键 → 检查，打开开发者工具</p>
+        </div>
+        
+        <div class="step">
+            <span class="step-number">4</span>
+            <strong>查看控制台日志</strong>
+            <p>切换到"Console"标签，应该能看到以下日志：</p>
+            <div class="code-block">
+AI对话监控助手 - Content Script 已加载
+检测到平台: gemini (或 chatgpt/claude)
+开始监控平台: gemini
+            </div>
+        </div>
+        
+        <div class="step">
+            <span class="step-number">5</span>
+            <strong>发送测试消息</strong>
+            <p>在AI平台上发送一条消息，等待AI回复。控制台应该显示：</p>
+            <div class="code-block">
+消息已保存: user [您的消息]
+消息已保存: assistant [AI的回复]
+            </div>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🔧 常见问题诊断</h2>
+        
+        <div class="status error">
+            <strong>问题1：看不到"Content Script 已加载"日志</strong>
+            <p>• 刷新页面（Ctrl+R 或 F5）</p>
+            <p>• 检查插件是否在扩展管理页面中启用</p>
+            <p>• 确认当前页面是支持的AI平台</p>
+        </div>
+        
+        <div class="status error">
+            <strong>问题2：看到"检测到平台"但没有"开始监控"</strong>
+            <p>• 检查插件设置中是否启用了对应平台</p>
+            <p>• 右键插件图标 → 选项 → 检查平台设置</p>
+        </div>
+        
+        <div class="status error">
+            <strong>问题3：看到"开始监控"但没有"消息已保存"</strong>
+            <p>• 这是最常见的问题，说明页面结构不匹配</p>
+            <p>• 需要更新适配器的选择器</p>
+            <p>• 请告诉我您看到的控制台日志，我可以帮您修复</p>
+        </div>
+        
+        <div class="status info">
+            <strong>问题4：Gemini无法记录</strong>
+            <p>• Gemini的页面结构经常变化</p>
+            <p>• 建议先用ChatGPT测试，确认插件本身工作正常</p>
+            <p>• 如果ChatGPT可以记录，说明插件正常，只是Gemini适配器需要更新</p>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>💡 手动测试方法</h2>
+        
+        <p>在AI平台的开发者工具控制台中，运行以下代码来测试：</p>
+        
+        <div class="code-block">
+// 测试1：检查插件是否加载
+console.log('插件状态:', typeof ChatGPTAdapter !== 'undefined' ? '已加载' : '未加载');
+
+// 测试2：查找消息元素（Gemini示例）
+const messages = document.querySelectorAll('[class*="message"], [data-message], article, div[role="listitem"]');
+console.log('找到', messages.length, '个可能的消息元素');
+messages.forEach((msg, i) => {
+    const text = msg.textContent || msg.innerText || '';
+    if (text.length > 20) {
+        console.log(`消息${i}:`, text.substring(0, 100));
+    }
+});
+
+// 测试3：检查存储
+chrome.storage.local.get(null, (items) => {
+    const messageKeys = Object.keys(items).filter(k => k.startsWith('messages_'));
+    console.log('存储的消息键:', messageKeys);
+    if (messageKeys.length > 0) {
+        const today = new Date().toISOString().split('T')[0];
+        const todayKey = `messages_${today}`;
+        console.log('今日消息数:', items[todayKey]?.length || 0);
+    }
+});
+        </div>
+        
+        <button class="btn" onclick="copyTestCode()">📋 复制测试代码</button>
+    </div>
+    
+    <div class="section">
+        <h2>📊 检查存储的数据</h2>
+        
+        <button class="btn" onclick="checkStorage()">检查存储数据</button>
+        <button class="btn btn-secondary" onclick="clearStorage()">清除测试数据</button>
+        
+        <div id="storageInfo" class="log-area" style="display: none;"></div>
+    </div>
+    
+    <div class="section">
+        <h2>✅ 推荐测试流程</h2>
+        
+        <ol style="margin-left: 20px; line-height: 2;">
+            <li><strong>先用ChatGPT测试</strong> - ChatGPT的适配最稳定</li>
+            <li><strong>确认插件正常工作</strong> - 如果能记录ChatGPT的对话，说明插件本身没问题</li>
+            <li><strong>再测试其他平台</strong> - 如果Gemini不行，我们可以一起调试</li>
+            <li><strong>查看popup统计</strong> - 点击插件图标，查看是否有数据</li>
+            <li><strong>生成总结</strong> - 测试总结功能是否正常</li>
+        </ol>
+    </div>
+    
+    <script>
+        function copyTestCode() {
+            const code = `// 测试插件状态
+console.log('插件状态:', typeof ChatGPTAdapter !== 'undefined' ? '已加载' : '未加载');
+
+// 查找消息元素
+const messages = document.querySelectorAll('[class*="message"], [data-message], article, div[role="listitem"]');
+console.log('找到', messages.length, '个可能的消息元素');
+messages.forEach((msg, i) => {
+    const text = msg.textContent || msg.innerText || '';
+    if (text.length > 20) {
+        console.log(\`消息\${i}:\`, text.substring(0, 100));
+    }
+});
+
+// 检查存储
+chrome.storage.local.get(null, (items) => {
+    const messageKeys = Object.keys(items).filter(k => k.startsWith('messages_'));
+    console.log('存储的消息键:', messageKeys);
+    if (messageKeys.length > 0) {
+        const today = new Date().toISOString().split('T')[0];
+        const todayKey = \`messages_\${today}\`;
+        console.log('今日消息数:', items[todayKey]?.length || 0);
+    }
+});`;
+            
+            navigator.clipboard.writeText(code).then(() => {
+                alert('测试代码已复制到剪贴板！\n\n请在AI平台的开发者工具控制台中粘贴运行。');
+            });
+        }
+        
+        function checkStorage() {
+            if (typeof chrome === 'undefined' || !chrome.storage) {
+                document.getElementById('storageInfo').innerHTML = 
+                    '<div class="log-entry error">❌ 无法访问Chrome Storage API（请在扩展页面中打开此工具）</div>';
+                document.getElementById('storageInfo').style.display = 'block';
+                return;
+            }
+            
+            chrome.storage.local.get(null, (items) => {
+                const messageKeys = Object.keys(items).filter(k => k.startsWith('messages_'));
+                let html = '';
+                
+                if (messageKeys.length === 0) {
+                    html = '<div class="log-entry info">📭 暂无存储的消息数据</div>';
+                } else {
+                    html += `<div class="log-entry success">✅ 找到 ${messageKeys.length} 个日期的数据</div>`;
+                    
+                    messageKeys.forEach(key => {
+                        const messages = items[key] || [];
+                        const date = key.replace('messages_', '');
+                        html += `<div class="log-entry">📅 ${date}: ${messages.length} 条消息</div>`;
+                        
+                        if (messages.length > 0) {
+                            messages.slice(0, 3).forEach((msg, i) => {
+                                html += `<div class="log-entry" style="margin-left: 20px;">
+                                    ${i + 1}. [${msg.role}] ${msg.content.substring(0, 50)}...
+                                </div>`;
+                            });
+                        }
+                    });
+                }
+                
+                document.getElementById('storageInfo').innerHTML = html;
+                document.getElementById('storageInfo').style.display = 'block';
+            });
+        }
+        
+        function clearStorage() {
+            if (confirm('确定要清除所有测试数据吗？')) {
+                chrome.storage.local.get(null, (items) => {
+                    const keysToRemove = Object.keys(items).filter(k => k.startsWith('messages_'));
+                    chrome.storage.local.remove(keysToRemove, () => {
+                        alert('测试数据已清除！');
+                        checkStorage();
+                    });
+                });
+            }
+        }
+    </script>
+</body>
+</html>
+
