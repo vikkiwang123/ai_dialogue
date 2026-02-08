@@ -22,13 +22,29 @@
 
   /** 检测元素是否在侧边栏/导航区域内（排除非对话内容） */
   function isInSidebar(el) {
-    return !!el.closest(
+    // 注意: Gemini 用 Angular Material，对话区在 mat-sidenav-content 内
+    //   mat-sidenav   = 侧边栏本身（要排除）
+    //   mat-sidenav-content = 主内容区（不能排除！）
+    // 所以不能用 [class*="sidenav"]，会误杀主内容区
+
+    const sidebar = el.closest(
       'nav, aside, [role="navigation"], [role="complementary"], ' +
-      '[class*="sidebar"], [class*="side-nav"], [class*="sidenav"], ' +
-      '[class*="drawer"], [class*="history-panel"], [class*="nav-panel"], ' +
+      '[class*="sidebar"], [class*="side-nav"], ' +
+      '[class*="history-panel"], [class*="nav-panel"], ' +
       '[class*="menu-panel"], [class*="conversation-list"], ' +
       'mat-sidenav, mat-drawer'
     );
+    if (!sidebar) return false;
+
+    // 如果匹配到的是 mat-sidenav-content（主内容区），不算侧边栏
+    const tag = (sidebar.tagName || '').toLowerCase();
+    if (tag === 'mat-sidenav-content') return false;
+
+    // 如果匹配到的容器的类名包含 "content"（如 sidenav-content, drawer-content），不算侧边栏
+    const cls = (sidebar.getAttribute('class') || '').toLowerCase();
+    if (cls.includes('content') && (cls.includes('sidenav') || cls.includes('drawer'))) return false;
+
+    return true;
   }
 
   /** 通用哈希函数 */
@@ -310,44 +326,71 @@
 
     /** 开发辅助：打印 Gemini 页面的 DOM 结构，帮助识别可用选择器 */
     _logDomStructure() {
-      const main = document.querySelector('main');
-      if (!main) { console.log('[AI监控] Gemini: 未找到 <main>'); return; }
+      const root = document.querySelector('mat-sidenav-content') ||
+                   document.querySelector('main') ||
+                   document.body;
+      console.log('[AI监控] Gemini DOM探测 root:', root.tagName, root.className?.toString().substring(0, 60));
 
-      // 打印 main 直接子元素的标签和类名
-      const children = Array.from(main.querySelectorAll('*')).slice(0, 60);
+      // 打印 root 内元素的标签和类名采样
+      const children = Array.from(root.querySelectorAll('*')).slice(0, 80);
       const tags = new Set();
       children.forEach(el => {
         const tag = el.tagName.toLowerCase();
         const cls = el.className && typeof el.className === 'string' ? el.className.split(/\s+/).filter(c => c.length > 2).slice(0, 3).join('.') : '';
         tags.add(cls ? `${tag}.${cls}` : tag);
       });
-      console.log('[AI监控] Gemini DOM 标签采样:', Array.from(tags).slice(0, 30).join(', '));
+      console.log('[AI监控] Gemini DOM 标签采样:', Array.from(tags).slice(0, 40).join(', '));
+
+      // 检测页面顶层容器结构
+      const topTags = Array.from(document.body.children).map(el =>
+        `${el.tagName.toLowerCase()}${el.className && typeof el.className === 'string' ? '.' + el.className.split(/\s+/)[0] : ''}`
+      );
+      console.log('[AI监控] Gemini body直接子元素:', topTags.join(', '));
 
       // 特别检测已知可能的选择器
       const probes = [
         'user-query', 'model-response', 'message-content',
+        'mat-sidenav-content', 'mat-sidenav', 'mat-sidenav-container',
         '[class*="conversation-turn"]', '[class*="turn"]',
         '[class*="query"]', '[class*="response"]',
         '[class*="message"]', '[data-message-id]', '[data-message]',
-        'article', '.chat-turn', '.prompt-container'
+        'article', '.chat-turn', '.prompt-container',
+        'main', '[role="main"]'
       ];
       probes.forEach(sel => {
         try {
-          const count = main.querySelectorAll(sel).length;
+          const count = document.querySelectorAll(sel).length;
           if (count > 0) console.log(`[AI监控] Gemini 选择器 "${sel}": ${count} 个`);
         } catch(e) {}
       });
     }
 
     getContainer() {
-      // Gemini 对话区在 main 内，侧边栏由 isInSidebar() 过滤
-      return document.querySelector('main') || document.body;
+      // Gemini 用 Angular Material: mat-sidenav-content 是主内容区
+      // 优先定位这个容器，避免监控侧边栏
+      const candidates = [
+        'mat-sidenav-content',       // Angular Material 主内容区
+        '[class*="main-content"]',
+        'main',
+      ];
+      for (const sel of candidates) {
+        const el = document.querySelector(sel);
+        if (el) {
+          console.log('[AI监控] Gemini容器:', sel);
+          return el;
+        }
+      }
+      console.log('[AI监控] Gemini容器: document.body (fallback)');
+      return document.body;
     }
 
     getMessages() {
       const found = [];
       const seen = new Set();
-      const main = document.querySelector('main');
+      // Gemini 可能没有 <main>，对话区在 mat-sidenav-content 内
+      const contentRoot = document.querySelector('mat-sidenav-content') ||
+                          document.querySelector('main') ||
+                          document.body;
 
       // 辅助: 在指定范围内收集匹配元素
       const collect = (root, selector, minLen) => {
@@ -363,6 +406,8 @@
         return count;
       };
 
+      console.log('[AI监控] Gemini getMessages contentRoot:', contentRoot.tagName);
+
       // === 策略1: Gemini Web Components ===
       collect(document, 'user-query, model-response', 5);
       if (found.length > 0) {
@@ -372,7 +417,7 @@
       }
 
       // === 策略2: 会话轮次 / 查询+响应容器 ===
-      collect(main, '.conversation-turn, [class*="turn-content"], [class*="query-content"], [class*="response-content"], [class*="query-text"], [class*="model-response"]', 10);
+      collect(contentRoot, '.conversation-turn, [class*="turn-content"], [class*="query-content"], [class*="response-content"], [class*="query-text"], [class*="model-response"]', 10);
       if (found.length > 0) {
         this._strategyUsed = 'TurnContainer';
         console.log('[AI监控] Gemini(策略2-TurnContainer)找到', found.length, '条消息');
@@ -380,26 +425,26 @@
       }
 
       // === 策略3: message-content / data属性 ===
-      collect(main, 'message-content, [class*="message-content"], [data-message-id], [data-message]', 10);
+      collect(contentRoot, 'message-content, [class*="message-content"], [data-message-id], [data-message]', 10);
       if (found.length > 0) {
         this._strategyUsed = 'MessageContent';
         console.log('[AI监控] Gemini(策略3-MessageContent)找到', found.length, '条消息');
         return found;
       }
 
-      // === 策略4: 宽泛回退 — [class*="message"] + article（仅 main 内 + 排除侧边栏） ===
+      // === 策略4: 宽泛回退 — [class*="message"] + article（对话容器内 + 排除侧边栏） ===
       // 这是旧版可用的选择器，加上 isInSidebar 过滤来避免侧边栏项
-      collect(main, '[class*="message"], [class*="conversation-turn"], article', 20);
+      collect(contentRoot, '[class*="message"], [class*="conversation-turn"], article', 20);
       if (found.length > 0) {
         this._strategyUsed = 'BroadFallback';
         console.log('[AI监控] Gemini(策略4-BroadFallback)找到', found.length, '条消息');
         return found;
       }
 
-      // === 策略5: 最宽泛 — main 内所有有实质内容的大文本块 ===
-      if (main) {
-        // 查找 main 内文本长度 > 50 的叶节点容器
-        main.querySelectorAll('div, p, section').forEach(el => {
+      // === 策略5: 最宽泛 — 对话容器内所有有实质内容的大文本块 ===
+      if (contentRoot) {
+        // 查找容器内文本长度 > 50 的叶节点容器
+        contentRoot.querySelectorAll('div, p, section').forEach(el => {
           if (seen.has(el) || isInSidebar(el)) return;
           const text = (el.innerText || '').trim();
           // 要求足够长的文本，且不是顶层容器（避免抓整个页面）
