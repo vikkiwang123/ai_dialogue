@@ -114,6 +114,18 @@ try {
 }
 
 // ============================================
+// 支持的 AI 平台列表
+// ============================================
+const AI_PLATFORMS = {
+  chatgpt:    { name: 'ChatGPT',    domains: ['chatgpt.com', 'chat.openai.com'] },
+  claude:     { name: 'Claude',     domains: ['claude.ai', 'console.anthropic.com'] },
+  copilot:    { name: 'Copilot',    domains: ['copilot.microsoft.com'] },
+  gemini:     { name: 'Gemini',     domains: ['gemini.google.com'] },
+  deepseek:   { name: 'DeepSeek',   domains: ['chat.deepseek.com'] },
+  perplexity: { name: 'Perplexity', domains: ['www.perplexity.ai'] }
+};
+
+// ============================================
 // 调用大模型API生成总结（从配置文件读取所有参数）
 // ============================================
 async function callLLMAPI(messages) {
@@ -207,12 +219,17 @@ chrome.runtime.onInstalled.addListener((details) => {
   
   chrome.storage.local.set({
     enabled: true,
-    platforms: { chatgpt: true, claude: true, copilot: true, gemini: true },
+    platforms: { chatgpt: true, claude: true, copilot: true, gemini: true, deepseek: true, perplexity: true },
     autoSummary: true,
-    retentionDays: 30
+    retentionDays: 30,
+    dailyReminder: true,
+    reminderTime: '20:00'
   });
 
   injectToAllTabs();
+
+  // 设置每日提醒闹钟
+  setupDailyReminder();
 });
 
 // ============================================
@@ -228,9 +245,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 function isAIPlatform(url) {
   try {
     const hostname = new URL(url).hostname;
-    return ['chatgpt.com', 'chat.openai.com', 'claude.ai', 'console.anthropic.com', 'copilot.microsoft.com', 'gemini.google.com']
-      .some(d => hostname.includes(d));
+    return Object.values(AI_PLATFORMS).some(p => p.domains.some(d => hostname.includes(d)));
   } catch { return false; }
+}
+
+function getPlatformFromUrl(url) {
+  try {
+    const hostname = new URL(url).hostname;
+    for (const [key, info] of Object.entries(AI_PLATFORMS)) {
+      if (info.domains.some(d => hostname.includes(d))) return key;
+    }
+  } catch {}
+  return null;
 }
 
 function injectToAllTabs() {
@@ -332,6 +358,63 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(err => sendResponse({ success: false, error: err.message }));
     return true;
   }
+
+  // ============ 新增功能 ============
+
+  // 手动保存消息（用户粘贴的对话）
+  if (request.type === 'SAVE_MANUAL_MESSAGES') {
+    saveManualMessages(request.messages)
+      .then(count => sendResponse({ success: true, count }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // 全文搜索（跨所有日期）
+  if (request.type === 'SEARCH_MESSAGES') {
+    searchMessages(request.query, request.options)
+      .then(results => sendResponse({ success: true, results }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // 获取平台健康状态
+  if (request.type === 'GET_PLATFORM_STATUS') {
+    getPlatformStatus()
+      .then(status => sendResponse({ success: true, status }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // 获取/保存提醒设置
+  if (request.type === 'GET_REMINDER_SETTINGS') {
+    chrome.storage.local.get(['dailyReminder', 'reminderTime'], result => {
+      sendResponse({
+        success: true,
+        settings: {
+          enabled: result.dailyReminder !== false,
+          time: result.reminderTime || '20:00'
+        }
+      });
+    });
+    return true;
+  }
+
+  if (request.type === 'SAVE_REMINDER_SETTINGS') {
+    chrome.storage.local.set({
+      dailyReminder: request.settings.enabled,
+      reminderTime: request.settings.time
+    }, () => {
+      setupDailyReminder();
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  // 内容脚本心跳
+  if (request.type === 'CONTENT_SCRIPT_ALIVE') {
+    sendResponse({ success: true });
+    return true;
+  }
 });
 
 // 处理AI总结（force=true 时跳过缓存，强制重新生成）
@@ -370,6 +453,249 @@ async function handleAISummary(date, force) {
 
   return summary;
 }
+
+// ============================================
+// 手动保存消息（用户粘贴的对话）
+// ============================================
+async function saveManualMessages(messages) {
+  const today = new Date().toISOString().split('T')[0];
+  const key = `messages_${today}`;
+
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get([key], result => {
+      const existing = result[key] || [];
+      let addedCount = 0;
+
+      messages.forEach(msg => {
+        // 检查重复
+        const duplicate = existing.some(e =>
+          e.content === msg.content && e.role === msg.role
+        );
+        if (!duplicate) {
+          existing.push({
+            id: 'manual_' + Date.now() + '_' + addedCount,
+            role: msg.role || 'user',
+            content: msg.content,
+            platform: msg.platform || 'manual',
+            timestamp: new Date().toISOString(),
+            url: '',
+            wordCount: (msg.content || '').length,
+            source: 'manual'
+          });
+          addedCount++;
+        }
+      });
+
+      chrome.storage.local.set({ [key]: existing }, () => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          console.log('[AI监控] ✅ 手动保存', addedCount, '条消息');
+          resolve(addedCount);
+        }
+      });
+    });
+  });
+}
+
+// ============================================
+// 全文搜索（跨所有日期）
+// ============================================
+async function searchMessages(query, options = {}) {
+  if (!query || query.trim().length === 0) return [];
+
+  const keywords = query.toLowerCase().trim().split(/\s+/);
+  const maxResults = options.maxResults || 50;
+  const platformFilter = options.platform || 'all';
+  const roleFilter = options.role || 'all';
+
+  return new Promise(resolve => {
+    chrome.storage.local.get(null, items => {
+      const results = [];
+
+      // 收集所有 messages_ 开头的数据
+      const dateKeys = Object.keys(items)
+        .filter(k => k.startsWith('messages_'))
+        .sort()
+        .reverse(); // 最近的日期在前
+
+      for (const key of dateKeys) {
+        const date = key.replace('messages_', '');
+        const messages = items[key] || [];
+
+        for (const msg of messages) {
+          if (results.length >= maxResults) break;
+
+          // 平台过滤
+          if (platformFilter !== 'all' && msg.platform !== platformFilter) continue;
+          // 角色过滤
+          if (roleFilter !== 'all' && msg.role !== roleFilter) continue;
+
+          // 关键词匹配（所有关键词都需要命中）
+          const content = (msg.content || '').toLowerCase();
+          const allMatch = keywords.every(kw => content.includes(kw));
+
+          if (allMatch) {
+            results.push({
+              ...msg,
+              date,
+              // 生成高亮摘录（找到第一个关键词附近的文本）
+              excerpt: generateExcerpt(msg.content, keywords[0], 100)
+            });
+          }
+        }
+        if (results.length >= maxResults) break;
+      }
+
+      resolve(results);
+    });
+  });
+}
+
+/**
+ * 生成搜索结果摘录，关键词附近 ±N 个字符
+ */
+function generateExcerpt(text, keyword, radius) {
+  if (!text || !keyword) return (text || '').substring(0, 200);
+  const lower = text.toLowerCase();
+  const idx = lower.indexOf(keyword.toLowerCase());
+  if (idx === -1) return text.substring(0, 200);
+
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(text.length, idx + keyword.length + radius);
+  let excerpt = '';
+  if (start > 0) excerpt += '...';
+  excerpt += text.substring(start, end);
+  if (end < text.length) excerpt += '...';
+  return excerpt;
+}
+
+// ============================================
+// 平台健康状态
+// ============================================
+async function getPlatformStatus() {
+  const status = {};
+
+  // 初始化所有平台状态
+  for (const [key, info] of Object.entries(AI_PLATFORMS)) {
+    status[key] = { name: info.name, active: false, tabCount: 0, tabIds: [] };
+  }
+
+  // 检查当前所有标签页
+  return new Promise(resolve => {
+    chrome.tabs.query({}, tabs => {
+      for (const tab of tabs) {
+        if (!tab.url) continue;
+        const platform = getPlatformFromUrl(tab.url);
+        if (platform && status[platform]) {
+          status[platform].active = true;
+          status[platform].tabCount++;
+          status[platform].tabIds.push(tab.id);
+        }
+      }
+
+      // 同时查看今天有没有该平台的消息
+      const today = new Date().toISOString().split('T')[0];
+      chrome.storage.local.get([`messages_${today}`], result => {
+        const messages = result[`messages_${today}`] || [];
+        for (const [key] of Object.entries(status)) {
+          status[key].todayMessages = messages.filter(m => m.platform === key).length;
+        }
+        resolve(status);
+      });
+    });
+  });
+}
+
+// ============================================
+// 每日提醒通知
+// ============================================
+function setupDailyReminder() {
+  chrome.storage.local.get(['dailyReminder', 'reminderTime'], result => {
+    // 先清除已有的提醒闹钟
+    chrome.alarms.clear('dailyReminder');
+
+    if (result.dailyReminder === false) {
+      console.log('[AI监控] 每日提醒已关闭');
+      return;
+    }
+
+    const time = result.reminderTime || '20:00';
+    const [hours, minutes] = time.split(':').map(Number);
+
+    // 计算下一次提醒时间
+    const now = new Date();
+    const nextReminder = new Date();
+    nextReminder.setHours(hours, minutes, 0, 0);
+
+    // 如果今天的时间已过，设到明天
+    if (nextReminder <= now) {
+      nextReminder.setDate(nextReminder.getDate() + 1);
+    }
+
+    const delayMinutes = (nextReminder.getTime() - now.getTime()) / 60000;
+
+    chrome.alarms.create('dailyReminder', {
+      delayInMinutes: delayMinutes,
+      periodInMinutes: 1440 // 每24小时
+    });
+
+    console.log('[AI监控] ✅ 每日提醒已设置:', time, '(约', Math.round(delayMinutes), '分钟后首次触发)');
+  });
+}
+
+// 处理闹钟触发
+chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === 'dailyReminder') {
+    await handleDailyReminder();
+  }
+
+  if (alarm.name === 'cleanupOldData') {
+    cleanupOldData();
+  }
+});
+
+async function handleDailyReminder() {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const messages = await getMessages(today);
+    const count = messages.length;
+
+    if (count === 0) {
+      // 没有消息就不发通知
+      return;
+    }
+
+    const userCount = messages.filter(m => m.role === 'user').length;
+    const aiCount = messages.filter(m => m.role === 'assistant').length;
+    const platforms = [...new Set(messages.map(m => m.platform))];
+
+    chrome.notifications.create('dailyReminder', {
+      type: 'basic',
+      iconUrl: 'assets/icons/icon128.png',
+      title: '📊 今日AI对话报告',
+      message: `今天你与AI交流了 ${count} 条消息（${userCount} 条提问，${aiCount} 条回复），使用了 ${platforms.length} 个平台。点击查看详情和AI总结！`,
+      priority: 1
+    });
+
+    console.log('[AI监控] ✅ 每日提醒通知已发送');
+  } catch (e) {
+    console.error('[AI监控] 发送提醒通知失败:', e);
+  }
+}
+
+// 点击通知时打开侧边栏
+chrome.notifications.onClicked.addListener(notificationId => {
+  if (notificationId === 'dailyReminder') {
+    // 打开侧边栏（需要先激活一个窗口）
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+      if (tabs[0]) {
+        chrome.sidePanel.open({ tabId: tabs[0].id }).catch(() => {});
+      }
+    });
+    chrome.notifications.clear(notificationId);
+  }
+});
 
 // ============================================
 // 存储操作
@@ -443,23 +769,22 @@ async function getMessages(date) {
 // ============================================
 try {
   chrome.alarms.create('cleanupOldData', { periodInMinutes: 1440 });
-  chrome.alarms.onAlarm.addListener(alarm => {
-    if (alarm.name === 'cleanupOldData') {
-      chrome.storage.local.get(null, items => {
-        const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - 30);
-        Object.keys(items).forEach(key => {
-          if (key.startsWith('messages_') || key.startsWith('summary_')) {
-            const dateStr = key.replace('messages_', '').replace('summary_', '');
-            const d = new Date(dateStr);
-            if (d < cutoff) chrome.storage.local.remove(key);
-          }
-        });
-      });
-    }
-  });
 } catch (e) {
   console.log('[AI监控] alarms设置失败（非致命）:', e.message);
+}
+
+function cleanupOldData() {
+  chrome.storage.local.get(null, items => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    Object.keys(items).forEach(key => {
+      if (key.startsWith('messages_') || key.startsWith('summary_')) {
+        const dateStr = key.replace('messages_', '').replace('summary_', '');
+        const d = new Date(dateStr);
+        if (d < cutoff) chrome.storage.local.remove(key);
+      }
+    });
+  });
 }
 
 // 启动时加载配置 + 迁移旧版kimiApiKey
@@ -483,6 +808,9 @@ try {
   }
   
   console.log('[AI监控] LLM配置已加载:', getCurrentProvider().name, getCurrentModel());
+
+  // 启动时设置每日提醒
+  setupDailyReminder();
 })();
 
 console.log('[AI监控] Background Service Worker 初始化完成');

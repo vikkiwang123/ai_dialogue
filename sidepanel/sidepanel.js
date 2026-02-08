@@ -141,10 +141,14 @@ document.addEventListener('DOMContentLoaded', () => {
   initDates();
   loadStats();
   checkStatus();
+  loadPlatformHealth();
+  loadReminderSettings();
   setupEventListeners();
 
   // 自动刷新：每30秒更新统计
   setInterval(loadStats, 30000);
+  // 每60秒刷新平台状态
+  setInterval(loadPlatformHealth, 60000);
 });
 
 // ============================================
@@ -159,6 +163,7 @@ function initTabs() {
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.getElementById('tab-' + tabId).classList.add('active');
       if (tabId === 'messages') loadMessages();
+      if (tabId === 'search') document.getElementById('searchInput').focus();
     });
   });
 }
@@ -189,27 +194,45 @@ function displayStats(stats) {
   document.getElementById('userMessages').textContent = stats.userMessages || 0;
   document.getElementById('totalWords').textContent = formatNumber(stats.totalWords || 0);
 
-  const list = document.getElementById('platformsList');
-  const entries = Object.entries(stats.platforms || {});
-
-  if (entries.length === 0) {
-    list.innerHTML = '<div class="empty-hint">暂无数据</div>';
-  } else {
-    const maxCount = Math.max(...entries.map(([, c]) => c));
-    list.innerHTML = entries.map(([platform, count]) => `
-      <div class="platform-row">
-        <span class="name">${getPlatformName(platform)}</span>
-        <span class="count">${count} 条</span>
-      </div>
-      <div class="platform-bar">
-        <div class="platform-bar-fill" style="width: ${Math.round(count / maxCount * 100)}%"></div>
-      </div>
-    `).join('');
-  }
+  // 平台分布现在在健康状态里显示，不需要单独的 platformsList
 }
 
 // ============================================
-// 最近消息（概览页）- 也用 markdown 渲染
+// 平台健康状态
+// ============================================
+function loadPlatformHealth() {
+  chrome.runtime.sendMessage({ type: 'GET_PLATFORM_STATUS' }, (response) => {
+    if (chrome.runtime.lastError) return;
+    const container = document.getElementById('platformHealth');
+    if (!response || !response.success) {
+      container.innerHTML = '<div class="empty-hint">无法获取状态</div>';
+      return;
+    }
+
+    const status = response.status;
+    const items = Object.entries(status).map(([key, info]) => {
+      const statusClass = info.active ? 'active' : (info.todayMessages > 0 ? 'has-data' : 'inactive');
+      const statusIcon = info.active ? '🟢' : (info.todayMessages > 0 ? '🟡' : '⚪');
+      const statusText = info.active
+        ? `${info.tabCount} 个标签页`
+        : (info.todayMessages > 0 ? '今日有数据' : '未打开');
+
+      return `
+        <div class="health-item ${statusClass}">
+          <span class="health-icon">${statusIcon}</span>
+          <span class="health-name">${info.name}</span>
+          <span class="health-status">${statusText}</span>
+          <span class="health-count">${info.todayMessages || 0} 条</span>
+        </div>
+      `;
+    });
+
+    container.innerHTML = items.join('');
+  });
+}
+
+// ============================================
+// 最近消息（概览页）
 // ============================================
 function loadRecentMessages() {
   chrome.runtime.sendMessage({ type: 'GET_MESSAGES' }, (response) => {
@@ -238,7 +261,7 @@ function loadRecentMessages() {
 }
 
 // ============================================
-// 消息列表（消息页）- markdown 渲染每条消息
+// 消息列表（消息页）
 // ============================================
 function loadMessages() {
   const date = document.getElementById('dateSelector').value;
@@ -267,7 +290,7 @@ function loadMessages() {
       <div class="message-card ${msg.role}">
         <div class="card-header">
           <span class="role-tag">${msg.role === 'user' ? '👤 我' : '🤖 AI'}</span>
-          <span class="platform-tag">${getPlatformName(msg.platform)}</span>
+          <span class="platform-tag">${getPlatformName(msg.platform)}${msg.source === 'manual' ? ' (手动)' : ''}</span>
         </div>
         <div class="card-content md-body">${renderMarkdown(msg.content || '')}</div>
         <div class="card-footer">${formatTime(msg.timestamp)}</div>
@@ -280,9 +303,286 @@ function loadMessages() {
 }
 
 // ============================================
+// 全文搜索
+// ============================================
+let searchTimer = null;
+
+function initSearch() {
+  const input = document.getElementById('searchInput');
+  const clearBtn = document.getElementById('searchClear');
+
+  input.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    clearBtn.style.display = input.value ? 'flex' : 'none';
+
+    if (input.value.trim().length >= 2) {
+      // 防抖 300ms
+      searchTimer = setTimeout(() => performSearch(), 300);
+    } else if (input.value.trim().length === 0) {
+      document.getElementById('searchResults').innerHTML = `
+        <div class="empty-hint">
+          <div class="empty-icon">🔍</div>
+          <p>输入关键词搜索所有对话记录</p>
+          <p class="empty-sub">支持多个关键词，用空格分隔</p>
+        </div>
+      `;
+    }
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      clearTimeout(searchTimer);
+      performSearch();
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    clearBtn.style.display = 'none';
+    document.getElementById('searchResults').innerHTML = `
+      <div class="empty-hint">
+        <div class="empty-icon">🔍</div>
+        <p>输入关键词搜索所有对话记录</p>
+        <p class="empty-sub">支持多个关键词，用空格分隔</p>
+      </div>
+    `;
+    input.focus();
+  });
+
+  document.getElementById('searchPlatform').addEventListener('change', performSearch);
+  document.getElementById('searchRole').addEventListener('change', performSearch);
+}
+
+function performSearch() {
+  const query = document.getElementById('searchInput').value.trim();
+  if (query.length < 2) return;
+
+  const platform = document.getElementById('searchPlatform').value;
+  const role = document.getElementById('searchRole').value;
+  const resultsContainer = document.getElementById('searchResults');
+
+  resultsContainer.innerHTML = `
+    <div class="loading-ai">
+      <div class="loading-spinner"></div>
+      <p>搜索中...</p>
+    </div>
+  `;
+
+  chrome.runtime.sendMessage({
+    type: 'SEARCH_MESSAGES',
+    query,
+    options: { platform, role, maxResults: 50 }
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      resultsContainer.innerHTML = '<div class="error-state"><p>❌ 搜索失败</p></div>';
+      return;
+    }
+
+    if (!response || !response.success || !response.results || response.results.length === 0) {
+      resultsContainer.innerHTML = `
+        <div class="empty-hint">
+          <div class="empty-icon">😕</div>
+          <p>没有找到匹配的结果</p>
+          <p class="empty-sub">试试其他关键词</p>
+        </div>
+      `;
+      return;
+    }
+
+    const results = response.results;
+    const keywords = query.toLowerCase().split(/\s+/);
+
+    // 按日期分组
+    const grouped = {};
+    results.forEach(r => {
+      const date = r.date || '未知日期';
+      if (!grouped[date]) grouped[date] = [];
+      grouped[date].push(r);
+    });
+
+    let html = `<div class="search-summary">找到 ${results.length} 条结果</div>`;
+
+    for (const [date, msgs] of Object.entries(grouped)) {
+      html += `<div class="search-date-group">`;
+      html += `<div class="search-date-header">📅 ${date} (${msgs.length} 条)</div>`;
+
+      msgs.forEach(msg => {
+        const highlightedExcerpt = highlightKeywords(escapeHtml(msg.excerpt || msg.content.substring(0, 200)), keywords);
+
+        html += `
+          <div class="search-result-card ${msg.role}">
+            <div class="card-header">
+              <span class="role-tag">${msg.role === 'user' ? '👤 我' : '🤖 AI'}</span>
+              <span class="platform-tag">${getPlatformName(msg.platform)}</span>
+              <span class="result-time">${formatTime(msg.timestamp)}</span>
+            </div>
+            <div class="card-content search-excerpt">${highlightedExcerpt}</div>
+          </div>
+        `;
+      });
+
+      html += `</div>`;
+    }
+
+    resultsContainer.innerHTML = html;
+  });
+}
+
+function highlightKeywords(text, keywords) {
+  let result = text;
+  keywords.forEach(kw => {
+    if (!kw) return;
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escaped})`, 'gi');
+    result = result.replace(regex, '<mark class="search-highlight">$1</mark>');
+  });
+  return result;
+}
+
+// ============================================
+// 手动添加对话
+// ============================================
+function initManualAdd() {
+  const modal = document.getElementById('manualModal');
+  const addBtn = document.getElementById('manualAddBtn');
+  const closeBtn = document.getElementById('modalClose');
+  const cancelBtn = document.getElementById('modalCancel');
+  const saveBtn = document.getElementById('modalSave');
+
+  addBtn.addEventListener('click', () => { modal.style.display = 'flex'; });
+  closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+  cancelBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+
+  // 点击遮罩关闭
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.style.display = 'none';
+  });
+
+  saveBtn.addEventListener('click', saveManualMessages);
+}
+
+function saveManualMessages() {
+  const platform = document.getElementById('manualPlatform').value;
+  const content = document.getElementById('manualContent').value.trim();
+
+  if (!content) {
+    alert('请输入对话内容');
+    return;
+  }
+
+  // 解析内容：支持 "用户: xxx" 和 "AI: xxx" 格式
+  const messages = parseManualContent(content, platform);
+
+  if (messages.length === 0) {
+    alert('无法解析对话内容，请检查格式');
+    return;
+  }
+
+  const saveBtn = document.getElementById('modalSave');
+  saveBtn.disabled = true;
+  saveBtn.textContent = '保存中...';
+
+  chrome.runtime.sendMessage({
+    type: 'SAVE_MANUAL_MESSAGES',
+    messages
+  }, (response) => {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '💾 保存';
+
+    if (response && response.success) {
+      document.getElementById('manualModal').style.display = 'none';
+      document.getElementById('manualContent').value = '';
+
+      // 刷新数据
+      loadStats();
+      loadMessages();
+      loadPlatformHealth();
+
+      // 显示成功提示
+      showToast(`✅ 已保存 ${response.count} 条消息`);
+    } else {
+      alert('保存失败: ' + (response?.error || '未知错误'));
+    }
+  });
+}
+
+function parseManualContent(content, platform) {
+  const messages = [];
+  const lines = content.split('\n');
+  let currentRole = null;
+  let currentContent = '';
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // 检测角色前缀
+    let newRole = null;
+    let text = trimmed;
+
+    if (/^(用户|我|user|human)\s*[:：]/i.test(trimmed)) {
+      newRole = 'user';
+      text = trimmed.replace(/^(用户|我|user|human)\s*[:：]\s*/i, '');
+    } else if (/^(AI|助手|assistant|bot|模型)\s*[:：]/i.test(trimmed)) {
+      newRole = 'assistant';
+      text = trimmed.replace(/^(AI|助手|assistant|bot|模型)\s*[:：]\s*/i, '');
+    }
+
+    if (newRole) {
+      // 保存上一条消息
+      if (currentRole && currentContent.trim()) {
+        messages.push({ role: currentRole, content: currentContent.trim(), platform });
+      }
+      currentRole = newRole;
+      currentContent = text;
+    } else if (currentRole) {
+      // 续行
+      currentContent += '\n' + trimmed;
+    } else {
+      // 没有角色标记，默认为用户消息
+      messages.push({ role: 'user', content: trimmed, platform });
+    }
+  }
+
+  // 保存最后一条
+  if (currentRole && currentContent.trim()) {
+    messages.push({ role: currentRole, content: currentContent.trim(), platform });
+  }
+
+  return messages;
+}
+
+// ============================================
+// 提醒设置
+// ============================================
+function loadReminderSettings() {
+  chrome.runtime.sendMessage({ type: 'GET_REMINDER_SETTINGS' }, (response) => {
+    if (chrome.runtime.lastError) return;
+    if (response && response.success) {
+      document.getElementById('reminderToggle').checked = response.settings.enabled;
+      document.getElementById('reminderTime').value = response.settings.time;
+    }
+  });
+}
+
+function saveReminderSettings() {
+  const enabled = document.getElementById('reminderToggle').checked;
+  const time = document.getElementById('reminderTime').value;
+
+  chrome.runtime.sendMessage({
+    type: 'SAVE_REMINDER_SETTINGS',
+    settings: { enabled, time }
+  }, (response) => {
+    if (response && response.success) {
+      showToast(enabled ? `✅ 每日 ${time} 提醒已开启` : '🔕 每日提醒已关闭');
+    }
+  });
+}
+
+// ============================================
 // AI总结 (流式输出)
 // ============================================
-let streamAbortController = null; // 用于取消正在进行的流式请求
+let streamAbortController = null;
 
 function generateSummary(force = false) {
   const date = document.getElementById('summaryDate').value;
@@ -428,6 +728,27 @@ function copyToClipboard() {
 }
 
 // ============================================
+// Toast 通知
+// ============================================
+function showToast(message, duration = 2500) {
+  // 移除已有 toast
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  // 动画
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// ============================================
 // 状态检查
 // ============================================
 function checkStatus() {
@@ -464,6 +785,7 @@ function setupEventListeners() {
   document.getElementById('refreshBtn').addEventListener('click', () => {
     loadStats();
     checkStatus();
+    loadPlatformHealth();
     if (document.getElementById('tab-messages').classList.contains('active')) loadMessages();
   });
 
@@ -477,6 +799,16 @@ function setupEventListeners() {
   document.getElementById('generateSummary').addEventListener('click', () => generateSummary(false));
   document.getElementById('regenerateSummary').addEventListener('click', () => generateSummary(true));
 
+  // 提醒设置
+  document.getElementById('reminderToggle').addEventListener('change', saveReminderSettings);
+  document.getElementById('reminderTime').addEventListener('change', saveReminderSettings);
+
+  // 搜索
+  initSearch();
+
+  // 手动添加
+  initManualAdd();
+
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.enabled) checkStatus();
     for (const key of Object.keys(changes)) {
@@ -489,7 +821,11 @@ function setupEventListeners() {
 // 工具函数
 // ============================================
 function getPlatformName(platform) {
-  const names = { chatgpt: 'ChatGPT', claude: 'Claude', copilot: 'Copilot', gemini: 'Gemini' };
+  const names = {
+    chatgpt: 'ChatGPT', claude: 'Claude', copilot: 'Copilot',
+    gemini: 'Gemini', deepseek: 'DeepSeek', perplexity: 'Perplexity',
+    manual: '手动添加', other: '其他'
+  };
   return names[platform] || platform || '未知';
 }
 

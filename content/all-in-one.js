@@ -623,6 +623,281 @@
   }
 
   // ============================================
+  // DeepSeek 适配器
+  // ============================================
+  class DeepSeekAdapter {
+    constructor() {
+      this.messageCache = new Map();
+      console.log('[AI监控] DeepSeek适配器已初始化');
+    }
+
+    getContainer() {
+      return document.querySelector('#chat-container, [class*="chat-container"], main, [class*="conversation"]') || document.body;
+    }
+
+    getMessages() {
+      const selectors = [
+        // DeepSeek 常见消息选择器
+        '[class*="chat-message"], [class*="message-item"]',
+        '[data-role], [data-message-role]',
+        '.ds-chat-message, .chat-message',
+        // 更宽泛的回退
+        '[class*="user-message"], [class*="assistant-message"], [class*="bot-message"]',
+      ];
+
+      for (const sel of selectors) {
+        const els = document.querySelectorAll(sel);
+        const filtered = Array.from(els).filter(el =>
+          !isInSidebar(el) && (el.textContent || '').trim().length > 5
+        );
+        if (filtered.length > 0) {
+          console.log('[AI监控] DeepSeek找到', filtered.length, '条消息 (选择器:', sel, ')');
+          return filtered;
+        }
+      }
+
+      // 最终回退: 查找 main 内有实质内容的 div 块
+      const main = document.querySelector('main') || document.body;
+      const blocks = [];
+      main.querySelectorAll('div').forEach(el => {
+        if (isInSidebar(el)) return;
+        const text = (el.innerText || '').trim();
+        if (text.length > 20 && text.length < 50000 && el.children.length < 15) {
+          // 避免嵌套重复
+          let dominated = false;
+          for (const existing of blocks) {
+            if (existing.contains(el) || el.contains(existing)) { dominated = true; break; }
+          }
+          if (!dominated) blocks.push(el);
+        }
+      });
+      console.log('[AI监控] DeepSeek(回退)找到', blocks.length, '个文本块');
+      return blocks;
+    }
+
+    getNewMessages(mutations) {
+      const newMessages = [];
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType !== 1) return;
+          if (isInSidebar(node)) return;
+
+          const selectors = [
+            '[class*="chat-message"]', '[class*="message-item"]',
+            '[data-role]', '[data-message-role]',
+            '.ds-chat-message', '.chat-message'
+          ];
+
+          let msg = null;
+          for (const sel of selectors) {
+            try {
+              if (node.matches && node.matches(sel)) { msg = node; break; }
+              if (node.querySelector) {
+                const child = node.querySelector(sel);
+                if (child && !isInSidebar(child)) { msg = child; break; }
+              }
+            } catch(e) {}
+          }
+
+          if (!msg && (node.innerText || '').trim().length > 20) msg = node;
+
+          if (msg && !isInSidebar(msg)) {
+            const id = this.getMessageId(msg);
+            if (id && !this.messageCache.has(id)) {
+              this.messageCache.set(id, true);
+              newMessages.push(msg);
+            }
+          }
+        });
+      });
+      return newMessages;
+    }
+
+    getMessageId(el) {
+      if (!el) return null;
+      const id = el.getAttribute('data-message-id') || el.getAttribute('id') || hashCode(el.textContent || '');
+      return id ? 'deepseek_' + id : null;
+    }
+
+    extractMessage(el) {
+      if (!el) return null;
+      try {
+        let role = 'assistant';
+        const attrs = (
+          (el.getAttribute('class') || '') + ' ' +
+          (el.getAttribute('data-role') || '') + ' ' +
+          (el.getAttribute('data-message-role') || '')
+        ).toLowerCase();
+
+        if (attrs.includes('user') || attrs.includes('human') || attrs.includes('query')) {
+          role = 'user';
+        }
+
+        // 往上查找父级角色标记
+        if (role === 'assistant') {
+          let parent = el;
+          for (let i = 0; i < 5 && parent; i++) {
+            const pAttrs = ((parent.getAttribute('class') || '') + ' ' + (parent.getAttribute('data-role') || '')).toLowerCase();
+            if (pAttrs.includes('user') || pAttrs.includes('human')) { role = 'user'; break; }
+            parent = parent.parentElement;
+          }
+        }
+
+        const content = (el.innerText || el.textContent || '').trim();
+        if (!content || content.length < 3) return null;
+
+        return {
+          role, content,
+          timestamp: new Date().toISOString(),
+          hasCode: content.includes('```') || !!el.querySelector('code, pre'),
+          conversationId: window.location.pathname
+        };
+      } catch (e) {
+        console.error('[AI监控] DeepSeek提取失败:', e);
+        return null;
+      }
+    }
+  }
+
+  // ============================================
+  // Perplexity 适配器
+  // ============================================
+  class PerplexityAdapter {
+    constructor() {
+      this.messageCache = new Map();
+      console.log('[AI监控] Perplexity适配器已初始化');
+    }
+
+    getContainer() {
+      return document.querySelector('main, [class*="thread"], [class*="conversation"]') || document.body;
+    }
+
+    getMessages() {
+      const selectors = [
+        // Perplexity 已知选择器
+        '[class*="prose"], [class*="answer-text"]',
+        '[class*="query-text"], [class*="user-query"]',
+        // 通用消息容器
+        '[data-testid*="message"], [data-testid*="answer"], [data-testid*="query"]',
+        '[class*="Message"], [class*="message-content"]',
+      ];
+
+      const main = document.querySelector('main') || document.body;
+      for (const sel of selectors) {
+        const els = main.querySelectorAll(sel);
+        const filtered = Array.from(els).filter(el =>
+          !isInSidebar(el) && (el.textContent || '').trim().length > 10
+        );
+        if (filtered.length > 0) {
+          console.log('[AI监控] Perplexity找到', filtered.length, '条消息 (选择器:', sel, ')');
+          return filtered;
+        }
+      }
+
+      // 回退: thread 内的文本块
+      const blocks = [];
+      main.querySelectorAll('div, article, section').forEach(el => {
+        if (isInSidebar(el)) return;
+        const text = (el.innerText || '').trim();
+        if (text.length > 30 && text.length < 50000 && el.children.length < 20) {
+          let dominated = false;
+          for (const existing of blocks) {
+            if (existing.contains(el) || el.contains(existing)) { dominated = true; break; }
+          }
+          if (!dominated) blocks.push(el);
+        }
+      });
+      console.log('[AI监控] Perplexity(回退)找到', blocks.length, '个文本块');
+      return blocks;
+    }
+
+    getNewMessages(mutations) {
+      const newMessages = [];
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType !== 1) return;
+          if (isInSidebar(node)) return;
+
+          const selectors = [
+            '[class*="prose"]', '[class*="answer-text"]',
+            '[class*="query-text"]', '[class*="user-query"]',
+            '[data-testid*="message"]', '[data-testid*="answer"]',
+          ];
+
+          let msg = null;
+          for (const sel of selectors) {
+            try {
+              if (node.matches && node.matches(sel)) { msg = node; break; }
+              if (node.querySelector) {
+                const child = node.querySelector(sel);
+                if (child && !isInSidebar(child)) { msg = child; break; }
+              }
+            } catch(e) {}
+          }
+
+          if (!msg && (node.innerText || '').trim().length > 30) msg = node;
+
+          if (msg && !isInSidebar(msg)) {
+            const id = this.getMessageId(msg);
+            if (id && !this.messageCache.has(id)) {
+              this.messageCache.set(id, true);
+              newMessages.push(msg);
+            }
+          }
+        });
+      });
+      return newMessages;
+    }
+
+    getMessageId(el) {
+      if (!el) return null;
+      const id = el.getAttribute('data-testid') || el.getAttribute('id') || hashCode(el.textContent || '');
+      return id ? 'perplexity_' + id : null;
+    }
+
+    extractMessage(el) {
+      if (!el) return null;
+      try {
+        let role = 'assistant';
+        const attrs = (
+          (el.getAttribute('class') || '') + ' ' +
+          (el.getAttribute('data-testid') || '')
+        ).toLowerCase();
+
+        // Perplexity: prose 通常是 AI 回复，query 是用户输入
+        if (attrs.includes('query') || attrs.includes('user') || attrs.includes('question')) {
+          role = 'user';
+        }
+
+        // 也检查父级
+        if (role === 'assistant') {
+          let parent = el;
+          for (let i = 0; i < 5 && parent; i++) {
+            const pClass = (parent.getAttribute('class') || '').toLowerCase();
+            if (pClass.includes('query') || pClass.includes('user') || pClass.includes('question')) {
+              role = 'user'; break;
+            }
+            parent = parent.parentElement;
+          }
+        }
+
+        const content = (el.innerText || el.textContent || '').trim();
+        if (!content || content.length < 5) return null;
+
+        return {
+          role, content,
+          timestamp: new Date().toISOString(),
+          hasCode: content.includes('```') || !!el.querySelector('code, pre'),
+          conversationId: window.location.pathname
+        };
+      } catch (e) {
+        console.error('[AI监控] Perplexity提取失败:', e);
+        return null;
+      }
+    }
+  }
+
+  // ============================================
   // 主监控逻辑
   // ============================================
 
@@ -633,16 +908,20 @@
     if (h.includes('claude.ai') || h.includes('console.anthropic.com')) return 'claude';
     if (h.includes('copilot.microsoft.com')) return 'copilot';
     if (h.includes('gemini.google.com')) return 'gemini';
+    if (h.includes('chat.deepseek.com')) return 'deepseek';
+    if (h.includes('perplexity.ai')) return 'perplexity';
     return null;
   }
 
   // 获取适配器
   function getAdapter(platform) {
     switch (platform) {
-      case 'chatgpt': return new ChatGPTAdapter();
-      case 'claude':  return new ClaudeAdapter();
-      case 'copilot': return new CopilotAdapter();
-      case 'gemini':  return new GeminiAdapter();
+      case 'chatgpt':    return new ChatGPTAdapter();
+      case 'claude':     return new ClaudeAdapter();
+      case 'copilot':    return new CopilotAdapter();
+      case 'gemini':     return new GeminiAdapter();
+      case 'deepseek':   return new DeepSeekAdapter();
+      case 'perplexity': return new PerplexityAdapter();
       default: return null;
     }
   }
