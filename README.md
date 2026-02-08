@@ -62,17 +62,12 @@ ai_dialogue/
 ├── background/
 │   └── service-worker.js         # 后台服务 Worker
 ├── content/
-│   ├── all-in-one.js             # 内容脚本（合并版，含全平台适配器）
-│   └── platforms/                # 平台适配器源码（参考）
-│       ├── chatgpt.js
-│       ├── claude.js
-│       ├── copilot.js
-│       └── gemini.js
+│   └── all-in-one.js             # 内容脚本（含全平台适配器）
 ├── sidepanel/                    # 侧边栏 UI（主界面）
 │   ├── sidepanel.html
 │   ├── sidepanel.js
 │   └── sidepanel.css
-├── popup/                        # 弹窗 UI（备用）
+├── popup/                        # 弹窗 UI
 │   ├── popup.html
 │   ├── popup.js
 │   └── popup.css
@@ -86,12 +81,9 @@ ai_dialogue/
 │   ├── highlight.min.js          # 代码高亮
 │   ├── highlight-github.min.css  # 代码高亮主题
 │   └── mermaid.min.js            # Mermaid 图表渲染
-├── assets/
-│   └── icons/                    # 图标文件
+├── assets/icons/                 # 图标文件
 ├── README.md
-├── QUICKSTART.md
-├── ARCHITECTURE.md
-└── INSTALL.md
+└── QUICKSTART.md
 ```
 
 ## 🔧 技术栈
