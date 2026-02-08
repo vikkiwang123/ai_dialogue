@@ -17,6 +17,36 @@
   console.log('[AI监控] 当前URL:', window.location.href);
 
   // ============================================
+  // 通用工具函数
+  // ============================================
+
+  /** 检测元素是否在侧边栏/导航区域内（排除非对话内容） */
+  function isInSidebar(el) {
+    return !!el.closest(
+      'nav, aside, [role="navigation"], [role="complementary"], ' +
+      '[class*="sidebar"], [class*="side-nav"], [class*="sidenav"], ' +
+      '[class*="drawer"], [class*="history-panel"], [class*="nav-panel"], ' +
+      '[class*="menu-panel"], [class*="conversation-list"], ' +
+      'mat-sidenav, mat-drawer'
+    );
+  }
+
+  /** 通用哈希函数 */
+  function hashCode(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length && i < 300; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString();
+  }
+
+  /** 归一化文本用于内容级去重 */
+  function normalizeForDedup(text) {
+    return (text || '').trim().replace(/\s+/g, ' ').substring(0, 200);
+  }
+
+  // ============================================
   // ChatGPT 适配器
   // ============================================
   class ChatGPTAdapter {
@@ -26,13 +56,16 @@
     }
 
     getContainer() {
+      // ChatGPT: main 标签包含对话区域，sidebar 在 nav 中
       return document.querySelector('main') || document.body;
     }
 
     getMessages() {
+      // [data-message-author-role] 是非常精确的选择器，不会匹配侧边栏
       const elements = document.querySelectorAll('[data-message-author-role]');
-      console.log('[AI监控] ChatGPT找到', elements.length, '条消息');
-      return Array.from(elements);
+      const filtered = Array.from(elements).filter(el => !isInSidebar(el));
+      console.log('[AI监控] ChatGPT找到', filtered.length, '条消息');
+      return filtered;
     }
 
     getNewMessages(mutations) {
@@ -40,19 +73,22 @@
       mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
           if (node.nodeType !== 1) return;
-          
+
           // 检查节点本身
           if (node.matches && node.matches('[data-message-author-role]')) {
-            const id = this.getMessageId(node);
-            if (id && !this.messageCache.has(id)) {
-              this.messageCache.set(id, true);
-              newMessages.push(node);
+            if (!isInSidebar(node)) {
+              const id = this.getMessageId(node);
+              if (id && !this.messageCache.has(id)) {
+                this.messageCache.set(id, true);
+                newMessages.push(node);
+              }
             }
           }
-          
+
           // 检查子节点
           if (node.querySelectorAll) {
             node.querySelectorAll('[data-message-author-role]').forEach(msg => {
+              if (isInSidebar(msg)) return;
               const id = this.getMessageId(msg);
               if (id && !this.messageCache.has(id)) {
                 this.messageCache.set(id, true);
@@ -67,7 +103,7 @@
 
     getMessageId(el) {
       if (!el) return null;
-      const id = el.getAttribute('data-message-id') || el.getAttribute('id') || this.hashCode(el.textContent || '');
+      const id = el.getAttribute('data-message-id') || el.getAttribute('id') || hashCode(el.textContent || '');
       return id ? 'chatgpt_' + id : null;
     }
 
@@ -75,7 +111,7 @@
       if (!el) return null;
       try {
         const role = el.getAttribute('data-message-author-role') === 'user' ? 'user' : 'assistant';
-        
+
         let content = '';
         const md = el.querySelector('.markdown, .prose, [class*="markdown"]');
         if (md) {
@@ -99,15 +135,6 @@
         return null;
       }
     }
-
-    hashCode(str) {
-      let hash = 0;
-      for (let i = 0; i < str.length && i < 200; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash = hash & hash;
-      }
-      return Math.abs(hash).toString();
-    }
   }
 
   // ============================================
@@ -124,10 +151,22 @@
     }
 
     getMessages() {
-      const selectors = ['[class*="Message"]', '[class*="message"]', '[data-role]'];
+      // Claude 使用 [data-is-streaming] 或 div with specific roles
+      // 先尝试精确选择器
+      const precise = document.querySelectorAll('[data-is-streaming], .font-claude-message, .font-user-message');
+      if (precise.length > 0) {
+        return Array.from(precise).filter(el => !isInSidebar(el) && (el.textContent || '').trim().length > 0);
+      }
+
+      // 回退: 查找 main 内的消息容器
+      const main = document.querySelector('main');
+      if (!main) return [];
+
+      const selectors = ['[data-role]', '[class*="Message"]'];
       for (const sel of selectors) {
-        const els = document.querySelectorAll(sel);
-        if (els.length > 0) return Array.from(els).filter(e => (e.textContent || '').trim().length > 0);
+        const els = main.querySelectorAll(sel);
+        const filtered = Array.from(els).filter(el => !isInSidebar(el) && (el.textContent || '').trim().length > 0);
+        if (filtered.length > 0) return filtered;
       }
       return [];
     }
@@ -137,8 +176,10 @@
       mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
           if (node.nodeType !== 1) return;
-          const msg = node.closest ? (node.closest('[class*="Message"]') || node.closest('[data-role]')) : null;
-          if (msg) {
+          if (isInSidebar(node)) return;
+
+          const msg = node.closest ? (node.closest('[data-role]') || node.closest('[class*="Message"]')) : null;
+          if (msg && !isInSidebar(msg)) {
             const id = this.getMessageId(msg);
             if (id && !this.messageCache.has(id)) {
               this.messageCache.set(id, true);
@@ -152,7 +193,7 @@
 
     getMessageId(el) {
       if (!el) return null;
-      const id = el.getAttribute('id') || el.getAttribute('data-id') || this.hashCode(el.textContent || '');
+      const id = el.getAttribute('id') || el.getAttribute('data-id') || hashCode(el.textContent || '');
       return id ? 'claude_' + id : null;
     }
 
@@ -160,7 +201,10 @@
       if (!el) return null;
       try {
         let role = 'assistant';
-        const attr = (el.getAttribute('data-role') || el.getAttribute('class') || '').toLowerCase();
+        const attr = (
+          (el.getAttribute('data-role') || '') + ' ' +
+          (el.getAttribute('class') || '')
+        ).toLowerCase();
         if (attr.includes('user') || attr.includes('human')) role = 'user';
 
         const content = (el.innerText || el.textContent || '').trim();
@@ -177,15 +221,6 @@
         return null;
       }
     }
-
-    hashCode(str) {
-      let hash = 0;
-      for (let i = 0; i < str.length && i < 200; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash = hash & hash;
-      }
-      return Math.abs(hash).toString();
-    }
   }
 
   // ============================================
@@ -198,14 +233,18 @@
     }
 
     getContainer() {
-      return document.querySelector('main') || document.body;
+      // Copilot: 只监控主对话区域
+      return document.querySelector('[class*="chat-container"], [class*="conversation"], main') || document.body;
     }
 
     getMessages() {
-      const selectors = ['[class*="message"]', '[role="listitem"]'];
+      // 只在 main/对话容器内查找，排除侧边栏
+      const container = document.querySelector('main') || document.body;
+      const selectors = ['[class*="user-message"], [class*="bot-message"]', 'cib-message-group', '[role="listitem"]'];
       for (const sel of selectors) {
-        const els = document.querySelectorAll(sel);
-        if (els.length > 0) return Array.from(els);
+        const els = container.querySelectorAll(sel);
+        const filtered = Array.from(els).filter(el => !isInSidebar(el) && (el.textContent || '').trim().length > 5);
+        if (filtered.length > 0) return filtered;
       }
       return [];
     }
@@ -215,8 +254,10 @@
       mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
           if (node.nodeType !== 1) return;
-          const msg = node.closest ? (node.closest('[class*="message"]') || node.closest('[role="listitem"]')) : null;
-          if (msg) {
+          if (isInSidebar(node)) return;
+
+          const msg = node.closest ? (node.closest('[class*="user-message"], [class*="bot-message"]') || node.closest('[role="listitem"]')) : null;
+          if (msg && !isInSidebar(msg)) {
             const id = this.getMessageId(msg);
             if (id && !this.messageCache.has(id)) {
               this.messageCache.set(id, true);
@@ -230,7 +271,7 @@
 
     getMessageId(el) {
       if (!el) return null;
-      const id = el.getAttribute('id') || this.hashCode(el.textContent || '');
+      const id = el.getAttribute('id') || hashCode(el.textContent || '');
       return id ? 'copilot_' + id : null;
     }
 
@@ -238,10 +279,12 @@
       if (!el) return null;
       try {
         let role = 'assistant';
-        if ((el.getAttribute('class') || '').toLowerCase().includes('user')) role = 'user';
+        const cls = (el.getAttribute('class') || '').toLowerCase();
+        const tag = (el.tagName || '').toLowerCase();
+        if (cls.includes('user') || tag.includes('user')) role = 'user';
 
         const content = (el.innerText || el.textContent || '').trim();
-        if (!content) return null;
+        if (!content || content.length < 5) return null;
 
         return {
           role, content,
@@ -251,19 +294,10 @@
         };
       } catch (e) { return null; }
     }
-
-    hashCode(str) {
-      let hash = 0;
-      for (let i = 0; i < str.length && i < 200; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash = hash & hash;
-      }
-      return Math.abs(hash).toString();
-    }
   }
 
   // ============================================
-  // Gemini 适配器
+  // Gemini 适配器（重写 - 修复角色识别和侧边栏误录问题）
   // ============================================
   class GeminiAdapter {
     constructor() {
@@ -272,21 +306,75 @@
     }
 
     getContainer() {
+      // Gemini: 精准定位对话区域，避免监控侧边栏
+      // Gemini 使用 Angular / Web Components, 对话区在 main 内
+      const candidates = [
+        'div[class*="conversation-container"]',
+        'div[class*="chat-history"]',
+        'div[class*="response-container-content"]',
+        'main'
+      ];
+      for (const sel of candidates) {
+        const el = document.querySelector(sel);
+        if (el) return el;
+      }
       return document.querySelector('main') || document.body;
     }
 
     getMessages() {
-      const selectors = ['[data-message]', '[class*="message"]', '[class*="conversation-turn"]', 'article'];
       const found = [];
       const seen = new Set();
-      for (const sel of selectors) {
-        document.querySelectorAll(sel).forEach(el => {
-          if (!seen.has(el) && (el.textContent || '').trim().length > 10) {
+
+      // === 策略1: Gemini Web Components（最精确） ===
+      // Gemini 使用 <user-query> 和 <model-response> 自定义元素
+      document.querySelectorAll('user-query, model-response').forEach(el => {
+        if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 5) {
+          seen.add(el);
+          found.push(el);
+        }
+      });
+      if (found.length > 0) {
+        console.log('[AI监控] Gemini(策略1-WebComponent)找到', found.length, '条消息');
+        return found;
+      }
+
+      // === 策略2: 会话轮次容器 ===
+      document.querySelectorAll('.conversation-turn, [class*="turn-content"], [class*="query-content"], [class*="response-content"]').forEach(el => {
+        if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 10) {
+          seen.add(el);
+          found.push(el);
+        }
+      });
+      if (found.length > 0) {
+        console.log('[AI监控] Gemini(策略2-TurnContainer)找到', found.length, '条消息');
+        return found;
+      }
+
+      // === 策略3: 从 main 内查找 message-content ===
+      const main = document.querySelector('main');
+      if (main) {
+        main.querySelectorAll('message-content, [class*="message-content"], [data-message-id]').forEach(el => {
+          if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 10) {
             seen.add(el);
             found.push(el);
           }
         });
       }
+      if (found.length > 0) {
+        console.log('[AI监控] Gemini(策略3-MessageContent)找到', found.length, '条消息');
+        return found;
+      }
+
+      // === 策略4: 最后回退 - 仅在 main 内用较宽泛选择器 ===
+      if (main) {
+        main.querySelectorAll('[data-message], article').forEach(el => {
+          if (!seen.has(el) && !isInSidebar(el) && (el.textContent || '').trim().length > 20) {
+            seen.add(el);
+            found.push(el);
+          }
+        });
+      }
+      console.log('[AI监控] Gemini(策略4-Fallback)找到', found.length, '条消息');
       return found;
     }
 
@@ -295,13 +383,26 @@
       mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
           if (node.nodeType !== 1) return;
-          const selectors = ['[data-message]', '[class*="message"]', 'article'];
+          if (isInSidebar(node)) return;
+
+          // 按优先级检测消息元素
           let msg = null;
-          for (const sel of selectors) {
+          const selectorPriority = [
+            'user-query', 'model-response',
+            'message-content', '[class*="message-content"]',
+            '.conversation-turn', '[class*="turn-content"]',
+            '[data-message-id]', '[data-message]'
+          ];
+
+          for (const sel of selectorPriority) {
             if (node.matches && node.matches(sel)) { msg = node; break; }
-            if (node.closest) { msg = node.closest(sel); if (msg) break; }
+            if (node.querySelector) {
+              const child = node.querySelector(sel);
+              if (child) { msg = child; break; }
+            }
           }
-          if (msg) {
+
+          if (msg && !isInSidebar(msg)) {
             const id = this.getMessageId(msg);
             if (id && !this.messageCache.has(id)) {
               this.messageCache.set(id, true);
@@ -315,19 +416,78 @@
 
     getMessageId(el) {
       if (!el) return null;
-      const id = el.getAttribute('id') || el.getAttribute('data-message') || this.hashCode(el.textContent || '');
+      const id = el.getAttribute('data-message-id') ||
+                 el.getAttribute('id') ||
+                 el.getAttribute('data-message') ||
+                 hashCode(el.textContent || '');
       return id ? 'gemini_' + id : null;
+    }
+
+    /** 判断消息角色 - 多策略 */
+    _detectRole(el) {
+      // --- 策略1: Web Component 标签名 ---
+      const tagName = (el.tagName || '').toLowerCase();
+      if (tagName === 'user-query') return 'user';
+      if (tagName === 'model-response') return 'assistant';
+
+      // --- 策略2: 祖先元素的标签名/类名 ---
+      const userAncestor = el.closest(
+        'user-query, [class*="user-query"], [class*="query-content"], ' +
+        '[class*="user-turn"], [class*="user-message"], [data-author-role="user"]'
+      );
+      if (userAncestor) return 'user';
+
+      const modelAncestor = el.closest(
+        'model-response, [class*="model-response"], [class*="response-content"], ' +
+        '[class*="model-turn"], [class*="bot-message"], [data-author-role="model"]'
+      );
+      if (modelAncestor) return 'assistant';
+
+      // --- 策略3: 元素自身属性 ---
+      const allAttrs = (
+        (el.getAttribute('class') || '') + ' ' +
+        (el.getAttribute('data-role') || '') + ' ' +
+        (el.getAttribute('data-author-role') || '') + ' ' +
+        (el.getAttribute('data-content-type') || '')
+      ).toLowerCase();
+
+      if (allAttrs.includes('user') || allAttrs.includes('human') ||
+          allAttrs.includes('query') || allAttrs.includes('prompt')) {
+        return 'user';
+      }
+      if (allAttrs.includes('model') || allAttrs.includes('assistant') ||
+          allAttrs.includes('response') || allAttrs.includes('bot')) {
+        return 'assistant';
+      }
+
+      // --- 策略4: 检测前一个兄弟元素是否有用户标识图标 ---
+      const prev = el.previousElementSibling;
+      if (prev) {
+        const prevText = (prev.textContent || '').trim().toLowerCase();
+        const prevClass = (prev.getAttribute('class') || '').toLowerCase();
+        if (prevText.length < 30 && (prevClass.includes('user') || prevClass.includes('query'))) {
+          return 'user';
+        }
+      }
+
+      // --- 策略5: 检测是否包含 Gemini 头像/标识 ---
+      // model 回复通常包含 Gemini 星号图标
+      const hasGeminiIcon = el.querySelector('[class*="gemini-icon"], [class*="model-icon"], [class*="sparkle"]');
+      if (hasGeminiIcon) return 'assistant';
+
+      // 默认为 assistant（Gemini 回复通常更长）
+      return 'assistant';
     }
 
     extractMessage(el) {
       if (!el) return null;
+      if (isInSidebar(el)) return null;
       try {
-        let role = 'assistant';
-        const attrs = ((el.getAttribute('class') || '') + ' ' + (el.getAttribute('data-role') || '')).toLowerCase();
-        if (attrs.includes('user') || attrs.includes('human') || attrs.includes('prompt')) role = 'user';
+        const role = this._detectRole(el);
 
         const content = (el.innerText || el.textContent || '').trim();
-        if (!content || content.length < 10) return null;
+        // 过滤掉太短的内容（避免捕获按钮文字、标题等）
+        if (!content || content.length < 5) return null;
 
         return {
           role, content,
@@ -335,16 +495,10 @@
           hasCode: content.includes('```') || !!el.querySelector('code, pre'),
           conversationId: window.location.pathname
         };
-      } catch (e) { return null; }
-    }
-
-    hashCode(str) {
-      let hash = 0;
-      for (let i = 0; i < str.length && i < 200; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash = hash & hash;
+      } catch (e) {
+        console.error('[AI监控] Gemini提取失败:', e);
+        return null;
       }
-      return Math.abs(hash).toString();
     }
   }
 
@@ -387,7 +541,8 @@
   }
 
   let observer = null;
-  const processedMessages = new Set();
+  const processedMessages = new Set();   // 元素 ID 级去重
+  const contentHashes = new Set();       // 内容级去重（防止重复记录）
 
   function startMonitoring() {
     if (observer) return;
@@ -430,12 +585,23 @@
   function processMessage(el) {
     if (!el) return;
 
+    // 跳过侧边栏元素
+    if (isInSidebar(el)) return;
+
     const id = adapter.getMessageId(el);
     if (!id || processedMessages.has(id)) return;
     processedMessages.add(id);
 
     const data = adapter.extractMessage(el);
     if (!data || !data.content || data.content.length < 2) return;
+
+    // 内容级去重：防止同一段文本被反复记录
+    const contentKey = normalizeForDedup(data.content);
+    if (contentHashes.has(contentKey)) {
+      console.log('[AI监控] 跳过重复内容:', data.content.substring(0, 40));
+      return;
+    }
+    contentHashes.add(contentKey);
 
     data.id = id;
     data.platform = platform;
@@ -470,7 +636,6 @@
     chrome.storage.local.get(['enabled'], result => {
       if (chrome.runtime.lastError) {
         console.error('[AI监控] 读取设置失败:', chrome.runtime.lastError.message);
-        // 即使读取失败也开始监控
         startMonitoring();
         return;
       }
@@ -505,5 +670,3 @@
   console.log('[AI监控] ✅ 内容脚本初始化完成');
 
 })();
-
-
