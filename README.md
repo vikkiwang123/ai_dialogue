@@ -23,26 +23,7 @@
 
 ## 🚀 快速开始
 
-### 第一步：生成图标文件
-
-插件需要图标才能正常安装。选择以下任一方式：
-
-**方式 1：使用网页工具（最简单）**
-1. 在浏览器中打开 `assets/icons/download-icons.html`
-2. 点击"下载所有图标"按钮
-3. 将下载的三个 PNG 文件移动到 `assets/icons/` 目录
-
-**方式 2：使用 Python 脚本**
-```bash
-cd assets/icons
-pip install Pillow
-python generate-icons.py
-```
-
-**方式 3：手动创建**
-使用图像编辑工具创建 16×16、48×48、128×128 像素的 PNG 图标，命名为 `icon16.png`、`icon48.png`、`icon128.png`
-
-### 第二步：加载插件
+### 第一步：加载插件
 
 #### Chrome / Edge
 
@@ -54,7 +35,7 @@ python generate-icons.py
 4. 选择项目根目录（`ai_dialogue` 文件夹）
 5. ✅ 安装完成！
 
-### 第三步：配置 API Key（用于 AI 总结）
+### 第二步：配置 API Key（用于 AI 总结）
 
 1. 右键插件图标 → **选项**（或直接访问设置页面）
 2. 在「大模型配置」中选择供应商（默认 Moonshot / Kimi）
@@ -62,7 +43,7 @@ python generate-icons.py
 4. 点击「保存配置」→「测试连接」
 5. ✅ 配置完成！
 
-### 第四步：开始使用
+### 第三步：开始使用
 
 1. 访问任一支持的 AI 平台（ChatGPT、Claude 等）
 2. 正常对话，插件自动记录
