@@ -432,7 +432,8 @@ function loadMessages() {
  */
 function renderGroupedConversations(byDate, container) {
   let html = '';
-  let globalMsgIdx = 0; // 全局消息索引（用于选取）
+  let globalMsgIdx = 0;
+  const renderedMessages = []; // 按渲染顺序重建消息数组
 
   // 按日期降序
   const sortedDates = Object.keys(byDate).sort().reverse();
@@ -475,11 +476,12 @@ function renderGroupedConversations(byDate, container) {
       // 对话消息体（默认折叠）
       html += `<div class="conv-body" id="${convId}" style="display:none;">`;
       conv.messages.forEach(msg => {
+        renderedMessages.push(msg); // 同步渲染顺序
         const roleIcon = msg.role === 'user' ? '👤' : '🤖';
-        const contentHtml = searchKeywords.length > 0
-          ? highlightKeywords(escapeHtml((msg.content || '').substring(0, 300)), searchKeywords)
-          : renderMarkdown(msg.content || '');
         const isSearchMode = searchKeywords.length > 0;
+        const contentHtml = isSearchMode
+          ? highlightKeywords(escapeHtml(msg.excerpt || (msg.content || '').substring(0, 200)), searchKeywords)
+          : renderMarkdown(msg.content || '');
 
         html += `<div class="conv-msg ${msg.role}" data-global-idx="${globalMsgIdx}">`;
         if (selectMode) {
@@ -493,7 +495,7 @@ function renderGroupedConversations(byDate, container) {
               <span class="conv-msg-role">${roleIcon} ${msg.role === 'user' ? '我' : 'AI'}</span>
               <span class="conv-msg-time">${formatTime(msg.timestamp)}</span>
             </div>
-            <div class="conv-msg-content ${isSearchMode ? '' : 'md-body'}">${contentHtml}${!isSearchMode && (msg.content || '').length > 300 ? '' : ''}</div>
+            <div class="conv-msg-content ${isSearchMode ? '' : 'md-body'}">${contentHtml}</div>
           </div>
         </div>`;
         globalMsgIdx++;
@@ -510,6 +512,9 @@ function renderGroupedConversations(byDate, container) {
     const totalResults = Object.values(byDate).reduce((s, m) => s + m.length, 0);
     html = `<div class="search-summary">找到 ${totalResults} 条结果</div>` + html;
   }
+
+  // 同步渲染顺序到 currentMessages（选取模式依赖这个索引）
+  currentMessages = renderedMessages;
 
   container.innerHTML = html;
 
