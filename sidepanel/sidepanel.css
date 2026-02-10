@@ -1723,23 +1723,106 @@ body {
   margin-top: 8px;
 }
 
-/* 主题编辑器 */
-.topics-editor {
-  width: 100%;
-  padding: 10px;
+/* 主题编辑表单 */
+.topics-edit-container {
+  margin: 12px 0;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.topics-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.topic-edit-item {
+  background: white;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.topic-edit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+}
+
+.topic-edit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.edit-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #666;
+}
+
+.edit-field input,
+.edit-field select,
+.edit-field textarea {
+  padding: 6px 10px;
   border: 1px solid #ddd;
   border-radius: 6px;
-  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  resize: vertical;
-  background: #fafafa;
+  font-size: 13px;
+  background: white;
   color: #333;
 }
-.topics-editor:focus {
+
+.edit-field input:focus,
+.edit-field select:focus,
+.edit-field textarea:focus {
   outline: none;
   border-color: #667eea;
-  background: #fff;
+  box-shadow: 0 0 0 2px rgba(102,126,234,0.1);
+}
+
+.edit-field textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.topic-edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e0e0e0;
+}
+
+/* 主题卡片点击效果 */
+.topic-card[data-action="view-conversations"]:hover {
+  background: #f0f4ff;
+  border-left-color: #667eea;
+  transform: translateX(2px);
+  transition: all 0.2s;
+}
+
+.topic-link-hint {
+  font-size: 10px;
+  color: #667eea;
+  margin-left: 8px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.topic-card[data-action="view-conversations"]:hover .topic-link-hint {
+  opacity: 1;
 }
 
 /* Mermaid 渲染区 */

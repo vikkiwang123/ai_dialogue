@@ -1295,6 +1295,15 @@ function initGraph() {
     else if (action === 'regenerate') regenerateTopics(date);
     else if (action === 'save-edit') saveEditedTopics(date);
     else if (action === 'cancel-edit') cancelEditTopics(date);
+    else if (action === 'add-topic') addTopic(date);
+    else if (action === 'remove-topic') {
+      const idx = parseInt(btn.dataset.idx);
+      removeTopic(date, idx);
+    }
+    else if (action === 'view-conversations') {
+      const topicName = btn.dataset.topicName;
+      viewConversationsForTopic(date, topicName);
+    }
     else if (action === 'batch-generate') {
       const dates = btn.dataset.dates.split(',');
       batchGenerateTopics(dates);
@@ -1550,7 +1559,7 @@ function renderTopicsView(allTopics) {
         const tags = (topic.tags || []).map(t => `<span class="topic-tag">#${t}</span>`).join('');
 
         html += `
-          <div class="topic-card depth-${topic.depth || 1}">
+          <div class="topic-card depth-${topic.depth || 1}" data-action="view-conversations" data-date="${day.date}" data-topic-name="${escapeHtml(topic.name)}" style="cursor:pointer;" title="点击查看相关对话">
             <div class="topic-header">
               <span class="topic-name">${escapeHtml(topic.name)}</span>
               <span class="topic-depth">${depthStars}</span>
@@ -1560,6 +1569,7 @@ function renderTopicsView(allTopics) {
             <div class="topic-meta">
               ${platformBadges}
               <span class="topic-msg-count">${topic.msgCount || 0} 条</span>
+              <span class="topic-link-hint">🔗 点击查看</span>
             </div>
           </div>`;
       });
@@ -1579,12 +1589,17 @@ function renderTopicsView(allTopics) {
 }
 
 // 生成单个日期
-async function generateSingleDate(date) {
+async function generateSingleDate(date, force = false) {
   const card = document.getElementById(`topic-card-${date}`);
   if (!card) return;
 
+  // 显示加载状态（如果有操作按钮区域，也更新）
+  const actionsDiv = card.querySelector('.topic-card-actions');
   const placeholder = card.querySelector('.topic-card-placeholder');
-  if (placeholder) {
+  
+  if (actionsDiv) {
+    actionsDiv.innerHTML = '<div class="loading-ai"><div class="loading-spinner"></div><p>生成中...</p></div>';
+  } else if (placeholder) {
     placeholder.innerHTML = '<div class="loading-ai"><div class="loading-spinner"></div><p>生成中...</p></div>';
   }
 
@@ -1593,7 +1608,7 @@ async function generateSingleDate(date) {
       chrome.runtime.sendMessage({
         type: 'EXTRACT_TOPICS_SINGLE',
         date,
-        force: false
+        force
       }, res => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
         else if (!res?.success) reject(new Error(res?.error || '生成失败'));
@@ -1602,11 +1617,13 @@ async function generateSingleDate(date) {
     });
 
     // 更新卡片
-    updateTopicCard(date, resp);
+    await updateTopicCard(date, resp);
     showToast(`✅ ${date} 主题生成完成`);
   } catch (e) {
     if (placeholder) {
       placeholder.innerHTML = `<p>❌ 生成失败: ${escapeHtml(e.message)}</p><button class="btn btn-ai btn-sm" data-action="generate" data-date="${date}">重试</button>`;
+    } else if (actionsDiv) {
+      actionsDiv.innerHTML = `<p style="color:#e74c3c; font-size:12px;">❌ 生成失败: ${escapeHtml(e.message)}</p>`;
     }
     showToast(`❌ 生成失败: ${e.message}`);
   }
@@ -1629,68 +1646,202 @@ async function updateTopicCard(date, data = null) {
   await refreshTopicsView();
 }
 
-// 编辑主题
+// 编辑主题（结构化表单）
 function editTopics(date) {
-  // 获取当前数据
   const card = document.getElementById(`topic-card-${date}`);
   if (!card) return;
 
-  // 从存储中读取
   chrome.storage.local.get([`topics_${date}`, `topics_confirmed_${date}`], items => {
     const data = items[`topics_confirmed_${date}`] || items[`topics_${date}`];
-    if (!data) return;
+    if (!data || !data.topics || data.topics.length === 0) {
+      showToast('⚠️ 没有可编辑的主题');
+      return;
+    }
 
-    const jsonText = JSON.stringify(data.topics || [], null, 2);
+    const topics = data.topics;
+    const topicsContainer = card.querySelector('.topics-list') || card;
+    
+    // 隐藏原有主题卡片，显示编辑表单
+    card.querySelectorAll('.topic-card').forEach(el => el.style.display = 'none');
     const actionsDiv = card.querySelector('.topic-card-actions');
-    if (!actionsDiv) return;
+    if (actionsDiv) actionsDiv.style.display = 'none';
 
-    actionsDiv.innerHTML = `
-      <textarea class="topics-editor" rows="10">${escapeHtml(jsonText)}</textarea>
-      <div style="display:flex; gap:6px; margin-top:8px;">
+    let html = '<div class="topics-edit-form">';
+    topics.forEach((topic, idx) => {
+      html += `
+        <div class="topic-edit-item" data-topic-idx="${idx}">
+          <div class="topic-edit-header">
+            <span>主题 ${idx + 1}</span>
+            <button class="btn-icon-sm" data-action="remove-topic" data-date="${date}" data-idx="${idx}">🗑️</button>
+          </div>
+          <div class="topic-edit-fields">
+            <div class="edit-field">
+              <label>主题名称</label>
+              <input type="text" class="topic-edit-name" value="${escapeHtml(topic.name || '')}" placeholder="例如: React性能优化">
+            </div>
+            <div class="edit-field">
+              <label>标签 (逗号分隔)</label>
+              <input type="text" class="topic-edit-tags" value="${escapeHtml((topic.tags || []).join(', '))}" placeholder="例如: 前端, 性能">
+            </div>
+            <div class="edit-field">
+              <label>深度</label>
+              <select class="topic-edit-depth">
+                <option value="1" ${topic.depth === 1 ? 'selected' : ''}>1 - 浅尝辄止</option>
+                <option value="2" ${topic.depth === 2 ? 'selected' : ''}>2 - 有一定深度</option>
+                <option value="3" ${topic.depth === 3 ? 'selected' : ''}>3 - 深入探讨</option>
+              </select>
+            </div>
+            <div class="edit-field">
+              <label>摘要</label>
+              <textarea class="topic-edit-summary" rows="2" placeholder="一句话总结">${escapeHtml(topic.summary || '')}</textarea>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+    html += `
+      <button class="btn btn-outline btn-sm" data-action="add-topic" data-date="${date}" style="margin-top:8px;">➕ 添加主题</button>
+      <div class="topic-edit-actions">
         <button class="btn btn-ai btn-sm" data-action="save-edit" data-date="${date}">💾 保存</button>
         <button class="btn btn-outline btn-sm" data-action="cancel-edit" data-date="${date}">取消</button>
       </div>
-    `;
+    </div>`;
+
+    // 插入编辑表单
+    const editDiv = document.createElement('div');
+    editDiv.className = 'topics-edit-container';
+    editDiv.innerHTML = html;
+    card.insertBefore(editDiv, card.firstChild.nextSibling);
   });
 }
 
-// 保存编辑
+// 保存编辑（从表单收集数据）
 async function saveEditedTopics(date) {
   const card = document.getElementById(`topic-card-${date}`);
   if (!card) return;
 
-  const textarea = card.querySelector('.topics-editor');
-  if (!textarea) return;
+  const editForm = card.querySelector('.topics-edit-form');
+  if (!editForm) return;
 
-  try {
-    const topics = JSON.parse(textarea.value);
-    if (!Array.isArray(topics)) throw new Error('必须是主题数组');
+  const topicItems = editForm.querySelectorAll('.topic-edit-item');
+  const topics = [];
 
-    // 保存到生成版本（覆盖）
+  topicItems.forEach(item => {
+    const name = item.querySelector('.topic-edit-name')?.value?.trim();
+    if (!name) return; // 跳过空主题
+
+    const tagsStr = item.querySelector('.topic-edit-tags')?.value?.trim() || '';
+    const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t);
+
+    topics.push({
+      name,
+      tags,
+      depth: parseInt(item.querySelector('.topic-edit-depth')?.value || '1'),
+      summary: item.querySelector('.topic-edit-summary')?.value?.trim() || '',
+      platforms: [], // 保留原数据
+      msgCount: 0
+    });
+  });
+
+  if (topics.length === 0) {
+    showToast('⚠️ 至少需要一个主题');
+    return;
+  }
+
+  // 保存
+  chrome.storage.local.get([`topics_${date}`], items => {
+    const original = items[`topics_${date}`] || {};
     const data = {
       date,
       topics,
-      messageCount: 0, // 从原数据获取
+      messageCount: original.messageCount || 0,
       generatedAt: new Date().toISOString()
     };
 
-    chrome.storage.local.get([`topics_${date}`], items => {
-      if (items[`topics_${date}`]) {
-        data.messageCount = items[`topics_${date}`].messageCount;
-      }
-      chrome.storage.local.set({ [`topics_${date}`]: data }, () => {
-        updateTopicCard(date, data);
-        showToast('✅ 已保存');
-      });
+    chrome.storage.local.set({ [`topics_${date}`]: data }, () => {
+      showToast('✅ 已保存');
+      updateTopicCard(date, data);
     });
-  } catch (e) {
-    showToast(`❌ JSON格式错误: ${e.message}`);
-  }
+  });
 }
 
 // 取消编辑
 function cancelEditTopics(date) {
-  updateTopicCard(date);
+  const card = document.getElementById(`topic-card-${date}`);
+  if (!card) return;
+  
+  // 移除编辑表单
+  const editContainer = card.querySelector('.topics-edit-container');
+  if (editContainer) editContainer.remove();
+  
+  // 恢复显示
+  card.querySelectorAll('.topic-card').forEach(el => el.style.display = '');
+  const actionsDiv = card.querySelector('.topic-card-actions');
+  if (actionsDiv) actionsDiv.style.display = 'flex';
+}
+
+// 添加主题
+function addTopic(date) {
+  const card = document.getElementById(`topic-card-${date}`);
+  if (!card) return;
+  
+  const editForm = card.querySelector('.topics-edit-form');
+  if (!editForm) return;
+  
+  const newIdx = editForm.querySelectorAll('.topic-edit-item').length;
+  const newItem = document.createElement('div');
+  newItem.className = 'topic-edit-item';
+  newItem.dataset.topicIdx = newIdx;
+  newItem.innerHTML = `
+    <div class="topic-edit-header">
+      <span>主题 ${newIdx + 1}</span>
+      <button class="btn-icon-sm" data-action="remove-topic" data-date="${date}" data-idx="${newIdx}">🗑️</button>
+    </div>
+    <div class="topic-edit-fields">
+      <div class="edit-field">
+        <label>主题名称</label>
+        <input type="text" class="topic-edit-name" placeholder="例如: React性能优化">
+      </div>
+      <div class="edit-field">
+        <label>标签 (逗号分隔)</label>
+        <input type="text" class="topic-edit-tags" placeholder="例如: 前端, 性能">
+      </div>
+      <div class="edit-field">
+        <label>深度</label>
+        <select class="topic-edit-depth">
+          <option value="1">1 - 浅尝辄止</option>
+          <option value="2" selected>2 - 有一定深度</option>
+          <option value="3">3 - 深入探讨</option>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label>摘要</label>
+        <textarea class="topic-edit-summary" rows="2" placeholder="一句话总结"></textarea>
+      </div>
+    </div>
+  `;
+  
+  const addBtn = editForm.querySelector('[data-action="add-topic"]');
+  addBtn.parentNode.insertBefore(newItem, addBtn);
+}
+
+// 删除主题
+function removeTopic(date, idx) {
+  const card = document.getElementById(`topic-card-${date}`);
+  if (!card) return;
+  
+  const editForm = card.querySelector('.topics-edit-form');
+  if (!editForm) return;
+  
+  const item = editForm.querySelector(`[data-topic-idx="${idx}"]`);
+  if (item) item.remove();
+  
+  // 重新编号
+  editForm.querySelectorAll('.topic-edit-item').forEach((el, i) => {
+    el.querySelector('.topic-edit-header span').textContent = `主题 ${i + 1}`;
+    el.dataset.topicIdx = i;
+    el.querySelector('[data-action="remove-topic"]').dataset.idx = i;
+  });
 }
 
 // 确认主题
@@ -1717,9 +1868,33 @@ async function confirmTopics(date) {
   });
 }
 
-// 重新生成
+// 重新生成（强制）
 async function regenerateTopics(date) {
-  await generateSingleDate(date);
+  await generateSingleDate(date, true);
+}
+
+// 查看主题相关对话
+function viewConversationsForTopic(date, topicName) {
+  // 切换到对话tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('[data-tab="dialogue"]').classList.add('active');
+  document.getElementById('tab-dialogue').classList.add('active');
+
+  // 设置日期筛选
+  document.getElementById('dateSelector').value = date;
+
+  // 设置搜索关键词（主题名称的关键词）
+  const keywords = topicName.split(/[，,、\s]+/).filter(k => k.length > 1).slice(0, 2);
+  if (keywords.length > 0) {
+    document.getElementById('searchInput').value = keywords.join(' ');
+    document.getElementById('searchClear').style.display = 'flex';
+  }
+
+  // 加载消息
+  loadMessages();
+  
+  showToast(`📅 已跳转到 ${date} 的对话`);
 }
 
 async function renderMermaidView(viewId, mermaidCode) {
@@ -1741,7 +1916,14 @@ async function renderMermaidView(viewId, mermaidCode) {
       document.getElementById(wrapperId + '-inner').innerHTML = svg;
     } catch (err) {
       console.warn('[AI监控] Mermaid渲染失败:', err);
-      container.innerHTML = `<div class="graph-mermaid-container"><div class="mermaid-error-block"><p>⚠️ 图表渲染失败</p><pre class="mermaid-source">${escapeHtml(mermaidCode)}</pre></div></div>`;
+      // 显示为代码块格式（不要红色错误）
+      container.innerHTML = `
+        <div class="code-block mermaid-fallback">
+          <div class="code-lang">⚠️ 图表语法有误</div>
+          <button class="code-copy-btn" data-code="${escapeHtml(mermaidCode).replace(/"/g, '&quot;')}">📋</button>
+          <pre><code>${escapeHtml(mermaidCode)}</code></pre>
+        </div>
+      `;
     }
   } else {
     container.innerHTML = `<div class="graph-mermaid-container"><pre class="mermaid-source">${escapeHtml(mermaidCode)}</pre></div>`;
