@@ -305,6 +305,9 @@ function loadRecentMessages() {
 // ============================================
 // 消息列表（消息页）
 // ============================================
+let selectMode = false;       // 是否处于选取模式
+let currentMessages = [];     // 当前页消息（filtered）
+
 function loadMessages() {
   const date = document.getElementById('dateSelector').value;
   const roleFilter = document.getElementById('roleFilter').value;
@@ -316,6 +319,8 @@ function loadMessages() {
 
     if (!response || !response.success || !response.messages || response.messages.length === 0) {
       container.innerHTML = '<div class="empty-hint">该日期没有对话记录</div>';
+      currentMessages = [];
+      updateSelectStats();
       return;
     }
 
@@ -327,25 +332,149 @@ function loadMessages() {
       messages = messages.filter(m => m.platform === platformFilter);
     }
 
+    currentMessages = messages;
+
     if (messages.length === 0) {
       container.innerHTML = '<div class="empty-hint">没有符合条件的消息</div>';
       return;
     }
 
-    container.innerHTML = messages.map(msg => `
-      <div class="message-card ${msg.role}">
-        <div class="card-header">
-          <span class="role-tag">${msg.role === 'user' ? '👤 我' : '🤖 AI'}</span>
-          <span class="platform-tag">${getPlatformName(msg.platform)}${msg.source === 'manual' ? ' (手动)' : ''}</span>
+    container.innerHTML = messages.map((msg, idx) => `
+      <div class="message-card ${msg.role} ${selectMode ? 'selectable' : ''}" data-idx="${idx}">
+        ${selectMode ? `<label class="msg-select-check"><input type="checkbox" class="msg-select-cb" data-idx="${idx}" checked></label>` : ''}
+        <div class="msg-card-body">
+          <div class="card-header">
+            <span class="role-tag">${msg.role === 'user' ? '👤 我' : '🤖 AI'}</span>
+            <span class="platform-tag">${getPlatformName(msg.platform)}${msg.source === 'manual' ? ' (手动)' : ''}</span>
+          </div>
+          <div class="card-content md-body">${renderMarkdown(msg.content || '')}</div>
+          <div class="card-footer">${formatTime(msg.timestamp)}</div>
         </div>
-        <div class="card-content md-body">${renderMarkdown(msg.content || '')}</div>
-        <div class="card-footer">${formatTime(msg.timestamp)}</div>
       </div>
     `).join('');
 
-    // 渲染消息中的 mermaid
+    // 选取模式下绑定 checkbox 事件
+    if (selectMode) {
+      container.querySelectorAll('.msg-select-cb').forEach(cb => {
+        cb.addEventListener('change', updateSelectStats);
+      });
+      // 也允许点击卡片区域 toggle
+      container.querySelectorAll('.message-card.selectable').forEach(card => {
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('.msg-select-check') || e.target.closest('a') || e.target.closest('button')) return;
+          const cb = card.querySelector('.msg-select-cb');
+          if (cb) { cb.checked = !cb.checked; updateSelectStats(); }
+        });
+      });
+      updateSelectStats();
+    }
+
     renderMermaidBlocks(container);
   });
+}
+
+// ============================================
+// 选取模式（内联上下文导出）
+// ============================================
+function toggleSelectMode(on) {
+  selectMode = on !== undefined ? on : !selectMode;
+  const bar = document.getElementById('selectBar');
+  const btn = document.getElementById('selectModeBtn');
+
+  if (selectMode) {
+    bar.style.display = 'block';
+    btn.classList.add('active');
+    btn.title = '退出选取模式';
+  } else {
+    bar.style.display = 'none';
+    btn.classList.remove('active');
+    btn.title = '选取消息引用到其他大模型';
+  }
+  // 重新渲染消息（加/去checkbox）
+  loadMessages();
+}
+
+function updateSelectStats() {
+  const checkboxes = document.querySelectorAll('.msg-select-cb');
+  const selected = document.querySelectorAll('.msg-select-cb:checked');
+  const totalChars = Array.from(selected).reduce((sum, cb) => {
+    const idx = parseInt(cb.dataset.idx);
+    return sum + (currentMessages[idx]?.content || '').length;
+  }, 0);
+  const tokens = Math.round(totalChars * 0.6);
+  const statsEl = document.getElementById('selectStats');
+  statsEl.innerHTML = `已选 <strong>${selected.length}</strong>/${checkboxes.length} 条 · ≈${formatNumber(totalChars)}字 · ≈${formatNumber(tokens)}t`;
+}
+
+function getSelectedMsgsFromList() {
+  const selected = [];
+  document.querySelectorAll('.msg-select-cb:checked').forEach(cb => {
+    const idx = parseInt(cb.dataset.idx);
+    if (currentMessages[idx]) selected.push(currentMessages[idx]);
+  });
+  return selected;
+}
+
+function buildSelectExportText() {
+  const selected = getSelectedMsgsFromList();
+  if (selected.length === 0) return '';
+
+  const format = document.getElementById('selectFormat').value;
+  const addGuide = document.getElementById('selectAddGuide').checked;
+  let text = '';
+
+  if (format === 'conversation') {
+    if (addGuide) text += '以下是我之前与AI的对话记录，请基于这些上下文继续：\n\n';
+    selected.forEach(msg => {
+      const role = msg.role === 'user' ? '用户' : 'AI';
+      text += `${role}: ${msg.content}\n\n`;
+    });
+    if (addGuide) text += '---\n请基于以上对话继续回答我的问题。\n';
+  } else if (format === 'markdown') {
+    if (addGuide) text += '> 以下是我之前与AI的对话记录\n\n';
+    selected.forEach(msg => {
+      const role = msg.role === 'user' ? '**用户**' : '**AI**';
+      text += `${role} (${formatTime(msg.timestamp)}): ${msg.content}\n\n`;
+    });
+  } else {
+    if (addGuide) text += '[对话上下文]\n\n';
+    selected.forEach(msg => {
+      text += `${msg.role === 'user' ? 'Q' : 'A'}: ${msg.content}\n\n`;
+    });
+  }
+
+  return text.trim();
+}
+
+function copySelectedContext() {
+  const text = buildSelectExportText();
+  if (!text) { showToast('⚠️ 没有选中任何消息'); return; }
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('selectCopyBtn');
+    btn.textContent = '✅ 已复制!';
+    setTimeout(() => { btn.textContent = '📋 复制上下文'; }, 2000);
+    showToast(`✅ 已复制 ${getSelectedMsgsFromList().length} 条消息`);
+  });
+}
+
+function downloadSelectedContext() {
+  const text = buildSelectExportText();
+  if (!text) { showToast('⚠️ 没有选中任何消息'); return; }
+  const format = document.getElementById('selectFormat').value;
+  const ext = format === 'markdown' ? 'md' : 'txt';
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `context-export-${getLocalDateStr()}.${ext}`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('✅ 文件已下载');
+}
+
+function selectAllMessages(all) {
+  document.querySelectorAll('.msg-select-cb').forEach(cb => { cb.checked = all; });
+  updateSelectStats();
 }
 
 // ============================================
@@ -896,352 +1025,22 @@ function showToast(message, duration = 2500) {
 }
 
 // ============================================
-// 上下文导出
+// 上下文导出（已整合到消息列表的选取模式）
 // ============================================
-let exportData = null; // 缓存查询结果
 
 function initExport() {
-  // 设置默认日期：最近7天
-  const today = new Date();
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-  document.getElementById('exportDateTo').value = getLocalDateStr(today);
-  document.getElementById('exportDateFrom').value = getLocalDateStr(weekAgo);
-
-  // 查询按钮
-  document.getElementById('exportQueryBtn').addEventListener('click', queryExportMessages);
-
-  // 复制 & 下载
-  document.getElementById('exportCopyBtn').addEventListener('click', copyExportContent);
-  document.getElementById('exportDownloadBtn').addEventListener('click', downloadExportContent);
-
-  // 预览切换
-  document.getElementById('exportPreviewToggle').addEventListener('click', toggleExportPreview);
-
-  // 格式切换时刷新预览和统计
-  document.querySelectorAll('input[name="exportFormat"]').forEach(r => {
-    r.addEventListener('change', updateExportStats);
-  });
-  document.getElementById('exportAddGuide').addEventListener('change', updateExportStats);
-}
-
-function queryExportMessages() {
-  const dateFrom = document.getElementById('exportDateFrom').value;
-  const dateTo = document.getElementById('exportDateTo').value;
-  const keyword = document.getElementById('exportKeyword').value;
-
-  if (!dateFrom || !dateTo) {
-    showToast('⚠️ 请选择日期范围');
-    return;
-  }
-
-  // 获取选中的平台
-  const platforms = [];
-  document.querySelectorAll('#exportPlatforms input[type="checkbox"]:checked').forEach(cb => {
-    platforms.push(cb.value);
-  });
-
-  if (platforms.length === 0) {
-    showToast('⚠️ 请至少选择一个平台');
-    return;
-  }
-
-  const btn = document.getElementById('exportQueryBtn');
-  btn.disabled = true;
-  btn.textContent = '查询中...';
-
-  const resultsContainer = document.getElementById('exportResults');
-  resultsContainer.innerHTML = '<div class="loading-ai"><div class="loading-spinner"></div><p>加载中...</p></div>';
-
-  chrome.runtime.sendMessage({
-    type: 'GET_CONTEXT_MESSAGES',
-    options: { dateFrom, dateTo, platforms, keyword }
-  }, (response) => {
-    btn.disabled = false;
-    btn.textContent = '🔍 查询';
-
-    if (chrome.runtime.lastError || !response || !response.success) {
-      resultsContainer.innerHTML = `<div class="error-state"><p>❌ 查询失败: ${response?.error || '未知错误'}</p></div>`;
-      return;
-    }
-
-    exportData = response.data;
-    renderExportResults(exportData);
+  // 选取模式按钮
+  document.getElementById('selectModeBtn').addEventListener('click', () => toggleSelectMode());
+  document.getElementById('selectCancelBtn').addEventListener('click', () => toggleSelectMode(false));
+  document.getElementById('selectCopyBtn').addEventListener('click', copySelectedContext);
+  document.getElementById('selectDownloadBtn').addEventListener('click', downloadSelectedContext);
+  document.getElementById('selectAllBtn').addEventListener('click', () => {
+    const allChecked = document.querySelectorAll('.msg-select-cb:checked').length === document.querySelectorAll('.msg-select-cb').length;
+    selectAllMessages(!allChecked);
   });
 }
 
-function renderExportResults(data) {
-  const container = document.getElementById('exportResults');
-  const actionsPanel = document.getElementById('exportActions');
-
-  if (!data || data.stats.totalMessages === 0) {
-    container.innerHTML = `<div class="empty-hint"><div class="empty-icon">😕</div><p>该范围内没有找到对话记录</p></div>`;
-    actionsPanel.style.display = 'none';
-    return;
-  }
-
-  let html = '';
-
-  // 遍历每个平台
-  for (const [platform, sessions] of Object.entries(data.platforms)) {
-    const platformName = getPlatformName(platform);
-    const totalMsgs = sessions.reduce((s, sess) => s + sess.messageCount, 0);
-
-    html += `<div class="export-platform-group">`;
-    html += `<div class="export-platform-header">
-      <label class="platform-group-check">
-        <input type="checkbox" data-platform="${platform}" class="platform-select-all" checked>
-        <strong>${platformName}</strong>
-      </label>
-      <span class="platform-summary">${sessions.length} 个会话 · ${totalMsgs} 条</span>
-    </div>`;
-
-    // 遍历每个会话
-    sessions.forEach((session, sIdx) => {
-      const startTime = formatDateTime(session.startTime);
-      const endTime = formatDateTime(session.endTime);
-      const timeRange = startTime === endTime ? startTime : `${startTime} → ${endTime}`;
-
-      html += `<div class="export-session">`;
-      html += `<div class="session-header">
-        <label class="session-check">
-          <input type="checkbox" data-platform="${platform}" data-session="${sIdx}" class="session-select-all" checked>
-          <span class="session-title">会话 ${session.sessionIndex}</span>
-        </label>
-        <span class="session-time">${timeRange}</span>
-        <span class="session-count">${session.messageCount} 条 · ${formatNumber(session.wordCount)} 字</span>
-      </div>`;
-      html += `<div class="session-messages">`;
-
-      session.messages.forEach((msg, mIdx) => {
-        const roleIcon = msg.role === 'user' ? '👤' : '🤖';
-        const roleLabel = msg.role === 'user' ? '我' : 'AI';
-        const preview = (msg.content || '').substring(0, 100);
-        const time = formatTime(msg.timestamp);
-
-        html += `
-          <div class="export-msg ${msg.role}">
-            <label class="msg-check">
-              <input type="checkbox" data-platform="${platform}" data-session="${sIdx}" data-msg="${mIdx}" class="msg-checkbox" checked>
-              <span class="msg-role-icon">${roleIcon}</span>
-            </label>
-            <div class="msg-content-preview">
-              <span class="msg-label">${roleLabel} <span class="msg-time-inline">${time}</span></span>
-              <span class="msg-preview-text">${escapeHtml(preview)}${msg.content.length > 100 ? '...' : ''}</span>
-            </div>
-          </div>`;
-      });
-
-      html += `</div></div>`; // session-messages + export-session
-    });
-
-    html += `</div>`; // export-platform-group
-  }
-
-  container.innerHTML = html;
-  actionsPanel.style.display = 'block';
-
-  // 绑定 checkbox 联动
-  bindExportCheckboxes();
-  updateExportStats();
-}
-
-function bindExportCheckboxes() {
-  // 平台级全选
-  document.querySelectorAll('.platform-select-all').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      const platform = e.target.dataset.platform;
-      const checked = e.target.checked;
-      document.querySelectorAll(`.session-select-all[data-platform="${platform}"]`).forEach(s => { s.checked = checked; });
-      document.querySelectorAll(`.msg-checkbox[data-platform="${platform}"]`).forEach(m => { m.checked = checked; });
-      updateExportStats();
-    });
-  });
-
-  // 会话级全选
-  document.querySelectorAll('.session-select-all').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      const { platform, session } = e.target.dataset;
-      const checked = e.target.checked;
-      document.querySelectorAll(`.msg-checkbox[data-platform="${platform}"][data-session="${session}"]`).forEach(m => { m.checked = checked; });
-      updateExportStats();
-    });
-  });
-
-  // 单条消息
-  document.querySelectorAll('.msg-checkbox').forEach(cb => {
-    cb.addEventListener('change', updateExportStats);
-  });
-}
-
-function getSelectedMessages() {
-  if (!exportData) return [];
-  const selected = [];
-
-  for (const [platform, sessions] of Object.entries(exportData.platforms)) {
-    sessions.forEach((session, sIdx) => {
-      session.messages.forEach((msg, mIdx) => {
-        const cb = document.querySelector(`.msg-checkbox[data-platform="${platform}"][data-session="${sIdx}"][data-msg="${mIdx}"]`);
-        if (cb && cb.checked) {
-          selected.push({ ...msg, _platform: platform, _sessionIndex: session.sessionIndex });
-        }
-      });
-    });
-  }
-
-  return selected;
-}
-
-function updateExportStats() {
-  const selected = getSelectedMessages();
-  const totalChars = selected.reduce((sum, m) => sum + (m.content || '').length, 0);
-  const estimatedTokens = Math.round(totalChars * 0.6); // 粗略估算
-
-  const statsEl = document.getElementById('exportStats');
-  statsEl.innerHTML = `已选 <strong>${selected.length}</strong> 条消息 · ≈<strong>${formatNumber(totalChars)}</strong> 字 · ≈<strong>${formatNumber(estimatedTokens)}</strong> tokens`;
-
-  // 刷新预览（如果展开了）
-  if (document.getElementById('exportPreview').style.display !== 'none') {
-    document.getElementById('exportPreviewText').textContent = buildExportText();
-  }
-}
-
-function buildExportText() {
-  const selected = getSelectedMessages();
-  if (selected.length === 0) return '（没有选中任何消息）';
-
-  const format = document.querySelector('input[name="exportFormat"]:checked')?.value || 'conversation';
-  const addGuide = document.getElementById('exportAddGuide').checked;
-
-  let text = '';
-
-  if (format === 'conversation') {
-    // 对话格式：分平台 → 分会话
-    if (addGuide) {
-      text += '以下是我之前与AI的对话记录，请基于这些上下文继续：\n\n';
-    }
-
-    // 按平台和会话分组
-    const grouped = groupSelectedByPlatformSession(selected);
-    for (const [platform, sessions] of Object.entries(grouped)) {
-      if (Object.keys(grouped).length > 1) {
-        text += `--- ${getPlatformName(platform)} ---\n\n`;
-      }
-      for (const [sessionIdx, msgs] of Object.entries(sessions)) {
-        if (Object.keys(sessions).length > 1) {
-          const startTime = formatDateTime(msgs[0].timestamp);
-          const endTime = formatDateTime(msgs[msgs.length - 1].timestamp);
-          text += `[会话 ${sessionIdx} · ${startTime}${startTime !== endTime ? ' ~ ' + endTime : ''}]\n\n`;
-        }
-        msgs.forEach(msg => {
-          const role = msg.role === 'user' ? '用户' : 'AI';
-          text += `${role}: ${msg.content}\n\n`;
-        });
-      }
-    }
-
-    if (addGuide) {
-      text += '---\n请基于以上对话继续回答我的问题。\n';
-    }
-
-  } else if (format === 'markdown') {
-    // Markdown 格式
-    if (addGuide) {
-      text += '> 以下是我之前与AI的对话记录\n\n';
-    }
-
-    const grouped = groupSelectedByPlatformSession(selected);
-    for (const [platform, sessions] of Object.entries(grouped)) {
-      text += `## ${getPlatformName(platform)}\n\n`;
-      for (const [sessionIdx, msgs] of Object.entries(sessions)) {
-        const startTime = formatDateTime(msgs[0].timestamp);
-        const endTime = formatDateTime(msgs[msgs.length - 1].timestamp);
-        text += `### 会话 ${sessionIdx} (${startTime}${startTime !== endTime ? ' ~ ' + endTime : ''})\n\n`;
-        msgs.forEach(msg => {
-          const role = msg.role === 'user' ? '**用户**' : '**AI**';
-          const time = formatTime(msg.timestamp);
-          text += `${role} (${time}): ${msg.content}\n\n`;
-        });
-      }
-    }
-
-  } else if (format === 'compact') {
-    // 精简格式
-    if (addGuide) {
-      text += '[对话上下文]\n\n';
-    }
-    selected.forEach(msg => {
-      const role = msg.role === 'user' ? 'Q' : 'A';
-      text += `${role}: ${msg.content}\n\n`;
-    });
-  }
-
-  return text.trim();
-}
-
-function groupSelectedByPlatformSession(selected) {
-  const grouped = {};
-  selected.forEach(msg => {
-    const p = msg._platform || msg.platform || 'unknown';
-    const s = msg._sessionIndex || 1;
-    if (!grouped[p]) grouped[p] = {};
-    if (!grouped[p][s]) grouped[p][s] = [];
-    grouped[p][s].push(msg);
-  });
-  return grouped;
-}
-
-function copyExportContent() {
-  const text = buildExportText();
-  if (!text || text === '（没有选中任何消息）') {
-    showToast('⚠️ 没有选中任何消息');
-    return;
-  }
-
-  navigator.clipboard.writeText(text).then(() => {
-    const btn = document.getElementById('exportCopyBtn');
-    btn.textContent = '✅ 已复制!';
-    setTimeout(() => { btn.textContent = '📋 复制到剪贴板'; }, 2000);
-    showToast(`✅ 已复制 ${getSelectedMessages().length} 条消息到剪贴板`);
-  }).catch(() => {
-    showToast('❌ 复制失败，请手动复制');
-  });
-}
-
-function downloadExportContent() {
-  const text = buildExportText();
-  if (!text || text === '（没有选中任何消息）') {
-    showToast('⚠️ 没有选中任何消息');
-    return;
-  }
-
-  const format = document.querySelector('input[name="exportFormat"]:checked')?.value || 'conversation';
-  const ext = format === 'markdown' ? 'md' : 'txt';
-  const dateFrom = document.getElementById('exportDateFrom').value;
-  const dateTo = document.getElementById('exportDateTo').value;
-
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `ai-context_${dateFrom}_${dateTo}.${ext}`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('✅ 文件已下载');
-}
-
-function toggleExportPreview() {
-  const preview = document.getElementById('exportPreview');
-  const btn = document.getElementById('exportPreviewToggle');
-  if (preview.style.display === 'none') {
-    preview.style.display = 'block';
-    document.getElementById('exportPreviewText').textContent = buildExportText();
-    btn.textContent = '🙈 收起预览';
-  } else {
-    preview.style.display = 'none';
-    btn.textContent = '👁 预览导出内容';
-  }
-}
+// (旧导出函数已移除 - 功能整合到消息列表的选取模式)
 
 function formatDateTime(timestamp) {
   if (!timestamp) return '';

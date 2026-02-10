@@ -1088,37 +1088,102 @@ body {
 /* Mermaid fallback (syntax error → show as code block) */
 .mermaid-fallback .code-lang { color: #e65100; }
 
-/* Export details (折叠式) */
-.export-details {
-  margin-top: 16px;
-  border: 1px solid #e8e8e8;
-  border-radius: 10px;
-  background: #fff;
-  overflow: hidden;
+/* ---- 选取模式 ---- */
+.select-btn { font-size: 14px !important; }
+.select-btn.active {
+  background: linear-gradient(135deg, #667eea, #764ba2) !important;
+  color: #fff !important;
+  border-color: transparent !important;
 }
-.export-details-summary {
-  padding: 12px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #555;
+
+.message-card.selectable {
   cursor: pointer;
-  background: linear-gradient(135deg, #f8f9ff, #faf8ff);
-  user-select: none;
-  list-style: none;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
 }
-.export-details-summary::-webkit-details-marker { display: none; }
-.export-details-summary::before {
-  content: '▶ ';
-  font-size: 10px;
-  transition: transform 0.2s;
-  display: inline-block;
+.message-card.selectable:hover { box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3); }
+
+.msg-select-check {
+  flex-shrink: 0;
+  padding-top: 2px;
+  display: flex;
+  align-items: center;
 }
-.export-details[open] > .export-details-summary::before {
-  transform: rotate(90deg);
+.msg-select-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #667eea;
+  cursor: pointer;
 }
-.export-details-body {
-  padding: 12px 14px;
-  border-top: 1px solid #e8e8e8;
+.msg-card-body { flex: 1; min-width: 0; }
+
+/* 选取浮动操作栏 */
+.select-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border-top: 2px solid #667eea;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.12);
+  padding: 10px 14px;
+  z-index: 100;
+  animation: slideUp 0.2s ease;
+}
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.select-bar-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.select-stats {
+  font-size: 12px;
+  color: #555;
+}
+.select-stats strong { color: #667eea; }
+.select-actions-inline { display: flex; gap: 6px; }
+.select-all-btn, .select-cancel-btn {
+  border: none;
+  background: #f0f0f0;
+  padding: 3px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.select-cancel-btn { background: #fee; color: #c62828; }
+.select-cancel-btn:hover { background: #fcc; }
+.select-all-btn:hover { background: #e0e0e0; }
+
+.select-bar-options {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.check-sm {
+  font-size: 11px;
+  color: #888;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.check-sm input { width: 14px; height: 14px; }
+
+.select-bar-actions {
+  display: flex;
+  gap: 8px;
+}
+.btn-select-copy {
+  flex: 1;
+  padding: 8px !important;
+  font-size: 13px !important;
+  border-radius: 8px !important;
 }
 
 /* ---- Loading ---- */
@@ -1391,18 +1456,7 @@ body {
    上下文导出 Tab
    ============================================ */
 
-/* 筛选区 */
-.export-filter { margin-bottom: 12px; }
-.export-filter h3 { font-size: 14px; margin-bottom: 10px; color: #555; }
-
-.export-dates {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.export-date-field { flex: 1; }
-.export-date-field label { display: block; font-size: 11px; color: #888; margin-bottom: 3px; }
+/* ---- 共用 UI 组件 ---- */
 .date-input {
   width: 100%;
   padding: 7px 10px;
@@ -1412,157 +1466,7 @@ body {
   background: #fff;
 }
 .date-input:focus { border-color: #667eea; outline: none; box-shadow: 0 0 0 2px rgba(102,126,234,0.15); }
-.date-arrow { color: #bbb; font-size: 16px; padding-top: 16px; }
 
-.export-platforms {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  margin-bottom: 10px;
-}
-.platform-check {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #555;
-  cursor: pointer;
-}
-.platform-check input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  accent-color: #667eea;
-}
-
-.export-keyword-row {
-  display: flex;
-  gap: 8px;
-}
-.export-keyword { flex: 1; }
-.btn-query {
-  white-space: nowrap;
-  padding: 8px 16px !important;
-  font-size: 13px !important;
-}
-
-/* 结果区 */
-.export-results {
-  max-height: 45vh;
-  overflow-y: auto;
-  margin-bottom: 12px;
-}
-
-.export-platform-group {
-  background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-  margin-bottom: 10px;
-  overflow: hidden;
-}
-
-.export-platform-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, #667eea12, #764ba212);
-  border-bottom: 1px solid #f0f0f0;
-}
-.platform-group-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-.platform-group-check strong { font-size: 13px; color: #333; }
-.platform-group-check input[type="checkbox"] { accent-color: #667eea; }
-.platform-summary { font-size: 11px; color: #999; }
-
-/* 会话 */
-.export-session {
-  border-bottom: 1px solid #f5f5f5;
-}
-.export-session:last-child { border-bottom: none; }
-
-.session-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: #fafafa;
-}
-.session-check {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-}
-.session-check input[type="checkbox"] { accent-color: #667eea; }
-.session-title { font-size: 12px; font-weight: 600; color: #555; }
-.session-time { font-size: 11px; color: #aaa; flex: 1; }
-.session-count { font-size: 11px; color: #bbb; white-space: nowrap; }
-
-/* 单条消息 */
-.session-messages { padding: 2px 8px; }
-
-.export-msg {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 5px 6px;
-  border-radius: 6px;
-  transition: background 0.15s;
-}
-.export-msg:hover { background: #f8f8ff; }
-
-.msg-check {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  flex-shrink: 0;
-  padding-top: 1px;
-}
-.msg-check input[type="checkbox"] { accent-color: #667eea; width: 13px; height: 13px; }
-.msg-role-icon { font-size: 13px; }
-
-.msg-content-preview { flex: 1; min-width: 0; }
-.msg-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #667eea;
-  margin-right: 4px;
-}
-.export-msg.assistant .msg-label { color: #27ae60; }
-.msg-time-inline { font-weight: 400; color: #ccc; margin-left: 4px; }
-.msg-preview-text {
-  display: block;
-  font-size: 12px;
-  color: #666;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-/* 导出操作区 */
-.export-actions {
-  background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-  padding: 14px;
-}
-.export-stats {
-  font-size: 12px;
-  color: #888;
-  padding: 6px 0 10px;
-  border-bottom: 1px solid #f0f0f0;
-  margin-bottom: 10px;
-}
-.export-stats strong { color: #667eea; }
-
-.export-format { margin-bottom: 10px; }
 .radio-label {
   display: block;
   font-size: 12px;
@@ -1572,7 +1476,6 @@ body {
 }
 .radio-label input[type="radio"] { accent-color: #667eea; margin-right: 4px; }
 
-.export-options { margin-bottom: 12px; }
 .check-label {
   font-size: 12px;
   color: #555;
@@ -1580,11 +1483,6 @@ body {
 }
 .check-label input[type="checkbox"] { accent-color: #667eea; margin-right: 4px; }
 
-.export-buttons {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
-}
 .btn-outline {
   background: #fff;
   color: #667eea;
@@ -1598,7 +1496,6 @@ body {
 .btn-outline:hover { background: #667eea10; }
 .btn-sm { padding: 6px 12px; }
 
-.export-preview-toggle { text-align: center; margin-bottom: 8px; }
 .btn-link {
   background: none;
   border: none;
@@ -1608,24 +1505,6 @@ body {
   text-decoration: underline;
 }
 .btn-link:hover { color: #764ba2; }
-
-.export-preview {
-  max-height: 300px;
-  overflow-y: auto;
-  border: 1px solid #e8e8e8;
-  border-radius: 8px;
-  background: #fafbfc;
-}
-.export-preview-text {
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 11px;
-  line-height: 1.6;
-  color: #444;
-  padding: 12px;
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
 
 .error-state { text-align: center; padding: 30px; color: #e74c3c; font-size: 13px; }
 

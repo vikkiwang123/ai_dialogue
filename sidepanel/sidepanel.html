@@ -150,67 +150,36 @@
             <option value="assistant">AI回复</option>
           </select>
           <button class="icon-btn add-btn" id="manualAddBtn" title="手动添加对话">➕</button>
+          <button class="icon-btn select-btn" id="selectModeBtn" title="选取消息引用到其他大模型">✂️</button>
         </div>
         <div class="messages-list" id="messagesList">
           <div class="empty-hint">选择日期查看消息</div>
         </div>
-
-        <!-- 导出区域（折叠式，在消息列表下方） -->
-        <details class="export-details">
-          <summary class="export-details-summary">📦 上下文导出 — 选取对话片段复制到其他大模型</summary>
-          <div class="export-details-body">
-            <div class="export-filter section-card">
-              <div class="export-dates">
-                <div class="export-date-field">
-                  <label>开始</label>
-                  <input type="date" id="exportDateFrom" class="date-input">
-                </div>
-                <span class="date-arrow">→</span>
-                <div class="export-date-field">
-                  <label>结束</label>
-                  <input type="date" id="exportDateTo" class="date-input">
-                </div>
-              </div>
-              <div class="export-platforms" id="exportPlatforms">
-                <label class="platform-check"><input type="checkbox" value="chatgpt" checked><span>ChatGPT</span></label>
-                <label class="platform-check"><input type="checkbox" value="claude" checked><span>Claude</span></label>
-                <label class="platform-check"><input type="checkbox" value="gemini" checked><span>Gemini</span></label>
-                <label class="platform-check"><input type="checkbox" value="copilot" checked><span>Copilot</span></label>
-                <label class="platform-check"><input type="checkbox" value="deepseek" checked><span>DeepSeek</span></label>
-                <label class="platform-check"><input type="checkbox" value="perplexity" checked><span>Perplexity</span></label>
-              </div>
-              <div class="export-keyword-row">
-                <input type="text" id="exportKeyword" class="search-input export-keyword" placeholder="关键词过滤（可选）">
-                <button class="btn btn-ai btn-query" id="exportQueryBtn">🔍 查询</button>
-              </div>
-            </div>
-            <div class="export-results" id="exportResults">
-              <div class="empty-hint"><p>选择日期范围后点击「查询」</p></div>
-            </div>
-            <div class="export-actions" id="exportActions" style="display: none;">
-              <div class="export-stats" id="exportStats"></div>
-              <div class="export-format">
-                <label class="radio-label"><input type="radio" name="exportFormat" value="conversation" checked> 对话格式</label>
-                <label class="radio-label"><input type="radio" name="exportFormat" value="markdown"> Markdown</label>
-                <label class="radio-label"><input type="radio" name="exportFormat" value="compact"> 精简</label>
-              </div>
-              <div class="export-options">
-                <label class="check-label"><input type="checkbox" id="exportAddGuide" checked> 添加引导语</label>
-              </div>
-              <div class="export-buttons">
-                <button class="btn btn-ai" id="exportCopyBtn">📋 复制到剪贴板</button>
-                <button class="btn btn-outline btn-sm" id="exportDownloadBtn">📥 下载</button>
-              </div>
-              <div class="export-preview-toggle">
-                <button class="btn-link" id="exportPreviewToggle">👁 预览</button>
-              </div>
-              <div class="export-preview" id="exportPreview" style="display: none;">
-                <pre class="export-preview-text" id="exportPreviewText"></pre>
-              </div>
-            </div>
-          </div>
-        </details>
       </div>
+    </section>
+
+    <!-- 选取模式浮动操作栏（固定在底部） -->
+    <div class="select-bar" id="selectBar" style="display:none;">
+      <div class="select-bar-top">
+        <div class="select-stats" id="selectStats">已选 0 条</div>
+        <div class="select-actions-inline">
+          <button class="select-all-btn" id="selectAllBtn" title="全选/取消全选">☑ 全选</button>
+          <button class="select-cancel-btn" id="selectCancelBtn" title="退出选取">✕</button>
+        </div>
+      </div>
+      <div class="select-bar-options">
+        <select id="selectFormat" class="filter-select filter-sm">
+          <option value="conversation">对话格式</option>
+          <option value="markdown">Markdown</option>
+          <option value="compact">精简(省token)</option>
+        </select>
+        <label class="check-sm"><input type="checkbox" id="selectAddGuide" checked>引导语</label>
+      </div>
+      <div class="select-bar-actions">
+        <button class="btn btn-ai btn-select-copy" id="selectCopyBtn">📋 复制上下文</button>
+        <button class="btn btn-outline btn-sm" id="selectDownloadBtn">📥</button>
+      </div>
+    </div>
     </section>
 
     <!-- ====== 洞察（总结 + 图谱 + 导出 合并） ====== -->
