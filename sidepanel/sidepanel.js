@@ -20,7 +20,7 @@ function initMarkdownRenderer() {
         return `<div class="mermaid-block"><pre class="mermaid">${escapeHtml(code)}</pre></div>`;
       }
 
-      // PlantUML (以文本方式展示，暂无在线渲染)
+      // PlantUML (以文本方式展示)
       if (language === 'plantuml' || language === 'puml') {
         return `<div class="uml-block"><div class="uml-label">📐 PlantUML</div><pre class="plantuml-code"><code>${escapeHtml(code)}</code></pre></div>`;
       }
@@ -34,12 +34,16 @@ function initMarkdownRenderer() {
           } else {
             highlighted = hljs.highlightAuto(code).value;
           }
-        } catch (e) {
-          // fallback
-        }
+        } catch (e) { /* fallback */ }
       }
       const langLabel = language ? `<span class="code-lang">${language}</span>` : '';
-      return `<div class="code-block">${langLabel}<pre><code class="hljs ${language ? 'language-' + language : ''}">${highlighted}</code></pre></div>`;
+      // data-code 用于复制按钮
+      const escapedForAttr = code.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      return `<div class="code-block" data-code="${escapedForAttr}">
+        ${langLabel}
+        <button class="code-copy-btn" title="复制代码">📋</button>
+        <pre><code class="hljs ${language ? 'language-' + language : ''}">${highlighted}</code></pre>
+      </div>`;
     };
 
     // 行内代码
@@ -126,10 +130,24 @@ async function renderMermaidBlocks(container) {
       block.parentElement.replaceChild(wrapper, block);
     } catch (err) {
       console.warn('[AI监控] Mermaid 渲染失败:', err);
-      block.classList.add('mermaid-error');
-      block.innerHTML = `<span class="mermaid-error-hint">⚠️ 图表语法有误</span>\n${escapeHtml(code)}`;
+      // 渲染失败 → 显示为普通代码块（不暴露红色错误）
+      const escapedForAttr = code.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      const fallback = document.createElement('div');
+      fallback.className = 'code-block mermaid-fallback';
+      fallback.dataset.code = code;
+      fallback.innerHTML = `
+        <span class="code-lang">mermaid ⚠️</span>
+        <button class="code-copy-btn" title="复制代码">📋</button>
+        <pre><code class="hljs">${escapeHtml(code)}</code></pre>
+      `;
+      block.parentElement.replaceChild(fallback, block);
+      // 清理 mermaid 产生的错误 DOM
+      const errDiv = document.getElementById('d' + id);
+      if (errDiv) errDiv.remove();
     }
   }
+  // 清理 mermaid 留下的任何错误 tooltip/element
+  document.querySelectorAll('[id^="dmermaid-"]').forEach(el => el.remove());
 }
 
 // ============================================
@@ -144,6 +162,19 @@ document.addEventListener('DOMContentLoaded', () => {
   loadPlatformHealth();
   loadReminderSettings();
   setupEventListeners();
+
+  // 代码块复制按钮（事件委托）
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.code-copy-btn');
+    if (!btn) return;
+    const block = btn.closest('.code-block');
+    if (!block) return;
+    const code = block.dataset.code || block.querySelector('code')?.textContent || '';
+    navigator.clipboard.writeText(code).then(() => {
+      btn.textContent = '✅';
+      setTimeout(() => { btn.textContent = '📋'; }, 1500);
+    });
+  });
 
   // 自动刷新：每30秒更新统计
   setInterval(loadStats, 30000);
@@ -277,6 +308,7 @@ function loadRecentMessages() {
 function loadMessages() {
   const date = document.getElementById('dateSelector').value;
   const roleFilter = document.getElementById('roleFilter').value;
+  const platformFilter = document.getElementById('platformFilter')?.value || 'all';
 
   chrome.runtime.sendMessage({ type: 'GET_MESSAGES', date }, (response) => {
     if (chrome.runtime.lastError) return;
@@ -290,6 +322,9 @@ function loadMessages() {
     let messages = response.messages;
     if (roleFilter !== 'all') {
       messages = messages.filter(m => m.role === roleFilter);
+    }
+    if (platformFilter !== 'all') {
+      messages = messages.filter(m => m.platform === platformFilter);
     }
 
     if (messages.length === 0) {
@@ -603,12 +638,34 @@ function generateSummary(force = false) {
   const regenBtn = document.getElementById('regenerateSummary');
   const result = document.getElementById('summaryResult');
 
+  // 如果有已确认的总结且不是强制重新生成 → 直接展示
+  if (!force) {
+    const confirmedKey = `summary_confirmed_${date}`;
+    chrome.storage.local.get([confirmedKey], (res) => {
+      if (res[confirmedKey] && res[confirmedKey].text) {
+        regenBtn.style.display = 'inline-block';
+        finalizeSummary(res[confirmedKey].text, date, true);
+        return;
+      }
+      // 没有已确认的 → 正常生成
+      doGenerateSummary(date, force);
+    });
+    return;
+  }
+
+  doGenerateSummary(date, force);
+}
+
+function doGenerateSummary(date, force) {
+  const btn = document.getElementById('generateSummary');
+  const regenBtn = document.getElementById('regenerateSummary');
+  const result = document.getElementById('summaryResult');
+
   btn.disabled = true;
   regenBtn.disabled = true;
   btn.textContent = '🤖 分析中...';
   regenBtn.style.display = 'none';
 
-  // 显示初始"连接中"状态
   result.innerHTML = `
     <div class="ai-badge">🤖 AI 生成 · ${date}</div>
     <div class="ai-rendered md-body streaming-content" id="streamingContent">
@@ -668,19 +725,98 @@ function generateSummary(force = false) {
  */
 async function finalizeSummary(summary, date, fromCache) {
   const result = document.getElementById('summaryResult');
-  const html = renderMarkdown(summary);
 
-  result.innerHTML = `
-    <div class="ai-badge">🤖 AI 生成 · ${date}${fromCache ? ' (缓存)' : ''}</div>
-    <div class="ai-rendered md-body">${html}</div>
-    <div class="ai-footer">
-      <span>生成时间: ${new Date().toLocaleString('zh-CN')}</span>
-      <button class="btn-copy" id="copyBtn">📋 复制</button>
-    </div>
-  `;
+  // 先检查该日期是否已有「已确认」的总结
+  const confirmedKey = `summary_confirmed_${date}`;
+  chrome.storage.local.get([confirmedKey], async (res) => {
+    const confirmed = res[confirmedKey];
+    if (confirmed && !fromCache) {
+      // 有已确认的版本 → 显示它而非新生成的
+      // 但如果是 force 重新生成的，就不用旧版
+    }
 
-  document.getElementById('copyBtn').addEventListener('click', copyToClipboard);
-  await renderMermaidBlocks(result);
+    const html = renderMarkdown(summary);
+    const isConfirmed = !!confirmed && fromCache;
+
+    result.innerHTML = `
+      <div class="ai-badge">
+        🤖 AI 生成 · ${date}
+        ${fromCache ? ' (缓存)' : ''}
+        ${isConfirmed ? ' <span class="confirmed-badge">✅ 已确认</span>' : ''}
+      </div>
+      <div class="ai-rendered md-body" id="summaryRendered">${html}</div>
+      <textarea class="summary-editor" id="summaryEditor" style="display:none;">${escapeHtml(summary)}</textarea>
+      <div class="ai-footer">
+        <span>生成时间: ${new Date().toLocaleString('zh-CN')}</span>
+        <div class="footer-actions">
+          <button class="btn-copy" id="copyBtn" title="复制">📋</button>
+          <button class="btn-copy" id="editBtn" title="编辑">${isConfirmed ? '📝' : '✏️'}</button>
+          ${!isConfirmed ? '<button class="btn-confirm" id="confirmBtn" title="确认总结（下次不再自动生成）">✅ 确认</button>' : ''}
+        </div>
+      </div>
+    `;
+
+    result.dataset.rawText = summary;
+    result.dataset.date = date;
+
+    document.getElementById('copyBtn').addEventListener('click', copyToClipboard);
+    document.getElementById('editBtn').addEventListener('click', toggleSummaryEdit);
+    const confirmBtn = document.getElementById('confirmBtn');
+    if (confirmBtn) confirmBtn.addEventListener('click', confirmSummary);
+
+    await renderMermaidBlocks(result);
+  });
+}
+
+/** 切换编辑/预览模式 */
+function toggleSummaryEdit() {
+  const rendered = document.getElementById('summaryRendered');
+  const editor = document.getElementById('summaryEditor');
+  const editBtn = document.getElementById('editBtn');
+
+  if (editor.style.display === 'none') {
+    // 进入编辑模式
+    editor.value = document.getElementById('summaryResult').dataset.rawText || '';
+    editor.style.display = 'block';
+    rendered.style.display = 'none';
+    editBtn.textContent = '👁 预览';
+    editor.focus();
+  } else {
+    // 回到预览模式
+    const newText = editor.value;
+    document.getElementById('summaryResult').dataset.rawText = newText;
+    rendered.innerHTML = renderMarkdown(newText);
+    rendered.style.display = 'block';
+    editor.style.display = 'none';
+    editBtn.textContent = '✏️';
+    renderMermaidBlocks(rendered);
+  }
+}
+
+/** 确认总结（保存为已确认，下次不再自动生成） */
+function confirmSummary() {
+  const result = document.getElementById('summaryResult');
+  const rawText = result.dataset.rawText || '';
+  const date = result.dataset.date || document.getElementById('summaryDate').value;
+
+  if (!rawText || !date) return;
+
+  const key = `summary_confirmed_${date}`;
+  chrome.storage.local.set({ [key]: { text: rawText, confirmedAt: new Date().toISOString() } }, () => {
+    // 也更新缓存 key 以保持一致
+    const cacheKey = `summary_${date}`;
+    chrome.storage.local.set({ [cacheKey]: rawText });
+
+    showToast('✅ 总结已确认，该日不会再自动重新生成');
+
+    // 更新UI
+    const badge = result.querySelector('.ai-badge');
+    if (badge && !badge.querySelector('.confirmed-badge')) {
+      badge.innerHTML += ' <span class="confirmed-badge">✅ 已确认</span>';
+    }
+    const confirmBtn = document.getElementById('confirmBtn');
+    if (confirmBtn) confirmBtn.remove();
+  });
 }
 
 /**
@@ -1447,6 +1583,7 @@ function setupEventListeners() {
 
   document.getElementById('dateSelector').addEventListener('change', loadMessages);
   document.getElementById('roleFilter').addEventListener('change', loadMessages);
+  document.getElementById('platformFilter').addEventListener('change', loadMessages);
 
   document.getElementById('generateSummary').addEventListener('click', () => generateSummary(false));
   document.getElementById('regenerateSummary').addEventListener('click', () => generateSummary(true));

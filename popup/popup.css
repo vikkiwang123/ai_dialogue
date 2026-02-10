@@ -497,7 +497,11 @@ body {
 .md-body .inline-code,
 .md-body code:not(.hljs) { background: #f0f1f3; color: #c7254e; padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: Consolas, monospace; }
 
-.code-block { margin: 8px 0; border-radius: 6px; overflow: hidden; background: #f6f8fa; border: 1px solid #e8e8e8; }
+.code-block { margin: 8px 0; border-radius: 6px; overflow: hidden; background: #f6f8fa; border: 1px solid #e8e8e8; position: relative; }
+.code-copy-btn { position: absolute; top: 4px; right: 8px; background: rgba(255,255,255,0.85); border: 1px solid #e0e0e0; border-radius: 5px; padding: 2px 8px; font-size: 12px; cursor: pointer; opacity: 0; transition: opacity 0.2s; z-index: 2; }
+.code-block:hover .code-copy-btn { opacity: 1; }
+.code-copy-btn:hover { background: #fff; border-color: #667eea; }
+.mermaid-fallback .code-lang { color: #e65100; }
 .code-block .code-lang { display: block; padding: 3px 10px; font-size: 10px; font-weight: 600; color: #888; background: #eef0f4; text-transform: uppercase; border-bottom: 1px solid #e0e0e0; }
 .code-block pre { margin: 0; padding: 10px 12px; overflow-x: auto; }
 .code-block code { font-size: 12px; font-family: Consolas, monospace; line-height: 1.5; background: none !important; padding: 0 !important; color: inherit; }

@@ -101,7 +101,7 @@
       </div>
     </section>
 
-    <!-- ====== 对话（消息 + 搜索 合并） ====== -->
+    <!-- ====== 对话（消息 + 搜索 + 导出） ====== -->
     <section class="tab-panel" id="tab-dialogue">
       <!-- 搜索栏（始终可见） -->
       <div class="search-toolbar">
@@ -135,8 +135,17 @@
       <div id="messagesSection">
         <div class="messages-toolbar">
           <input type="date" id="dateSelector" class="date-input">
-          <select id="roleFilter" class="filter-select">
-            <option value="all">全部</option>
+          <select id="platformFilter" class="filter-select filter-sm">
+            <option value="all">全部平台</option>
+            <option value="chatgpt">ChatGPT</option>
+            <option value="claude">Claude</option>
+            <option value="copilot">Copilot</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="perplexity">Perplexity</option>
+          </select>
+          <select id="roleFilter" class="filter-select filter-sm">
+            <option value="all">全部角色</option>
             <option value="user">我的消息</option>
             <option value="assistant">AI回复</option>
           </select>
@@ -145,6 +154,62 @@
         <div class="messages-list" id="messagesList">
           <div class="empty-hint">选择日期查看消息</div>
         </div>
+
+        <!-- 导出区域（折叠式，在消息列表下方） -->
+        <details class="export-details">
+          <summary class="export-details-summary">📦 上下文导出 — 选取对话片段复制到其他大模型</summary>
+          <div class="export-details-body">
+            <div class="export-filter section-card">
+              <div class="export-dates">
+                <div class="export-date-field">
+                  <label>开始</label>
+                  <input type="date" id="exportDateFrom" class="date-input">
+                </div>
+                <span class="date-arrow">→</span>
+                <div class="export-date-field">
+                  <label>结束</label>
+                  <input type="date" id="exportDateTo" class="date-input">
+                </div>
+              </div>
+              <div class="export-platforms" id="exportPlatforms">
+                <label class="platform-check"><input type="checkbox" value="chatgpt" checked><span>ChatGPT</span></label>
+                <label class="platform-check"><input type="checkbox" value="claude" checked><span>Claude</span></label>
+                <label class="platform-check"><input type="checkbox" value="gemini" checked><span>Gemini</span></label>
+                <label class="platform-check"><input type="checkbox" value="copilot" checked><span>Copilot</span></label>
+                <label class="platform-check"><input type="checkbox" value="deepseek" checked><span>DeepSeek</span></label>
+                <label class="platform-check"><input type="checkbox" value="perplexity" checked><span>Perplexity</span></label>
+              </div>
+              <div class="export-keyword-row">
+                <input type="text" id="exportKeyword" class="search-input export-keyword" placeholder="关键词过滤（可选）">
+                <button class="btn btn-ai btn-query" id="exportQueryBtn">🔍 查询</button>
+              </div>
+            </div>
+            <div class="export-results" id="exportResults">
+              <div class="empty-hint"><p>选择日期范围后点击「查询」</p></div>
+            </div>
+            <div class="export-actions" id="exportActions" style="display: none;">
+              <div class="export-stats" id="exportStats"></div>
+              <div class="export-format">
+                <label class="radio-label"><input type="radio" name="exportFormat" value="conversation" checked> 对话格式</label>
+                <label class="radio-label"><input type="radio" name="exportFormat" value="markdown"> Markdown</label>
+                <label class="radio-label"><input type="radio" name="exportFormat" value="compact"> 精简</label>
+              </div>
+              <div class="export-options">
+                <label class="check-label"><input type="checkbox" id="exportAddGuide" checked> 添加引导语</label>
+              </div>
+              <div class="export-buttons">
+                <button class="btn btn-ai" id="exportCopyBtn">📋 复制到剪贴板</button>
+                <button class="btn btn-outline btn-sm" id="exportDownloadBtn">📥 下载</button>
+              </div>
+              <div class="export-preview-toggle">
+                <button class="btn-link" id="exportPreviewToggle">👁 预览</button>
+              </div>
+              <div class="export-preview" id="exportPreview" style="display: none;">
+                <pre class="export-preview-text" id="exportPreviewText"></pre>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -154,7 +219,6 @@
       <div class="insights-sub-tabs">
         <button class="insights-sub-btn active" data-sub="summary">📝 总结</button>
         <button class="insights-sub-btn" data-sub="graph">🧠 图谱</button>
-        <button class="insights-sub-btn" data-sub="export">📦 导出</button>
       </div>
 
       <!-- 子页：AI总结 -->
@@ -232,68 +296,6 @@
         </div>
       </div>
 
-      <!-- 子页：上下文导出 -->
-      <div class="insights-sub" id="sub-export">
-      <!-- 第一步：筛选 -->
-      <div class="export-filter section-card">
-        <h3>🎯 筛选对话</h3>
-        <div class="export-dates">
-          <div class="export-date-field">
-            <label>开始日期</label>
-            <input type="date" id="exportDateFrom" class="date-input">
-          </div>
-          <span class="date-arrow">→</span>
-          <div class="export-date-field">
-            <label>结束日期</label>
-            <input type="date" id="exportDateTo" class="date-input">
-          </div>
-        </div>
-        <div class="export-platforms" id="exportPlatforms">
-          <label class="platform-check"><input type="checkbox" value="chatgpt" checked><span>ChatGPT</span></label>
-          <label class="platform-check"><input type="checkbox" value="claude" checked><span>Claude</span></label>
-          <label class="platform-check"><input type="checkbox" value="gemini" checked><span>Gemini</span></label>
-          <label class="platform-check"><input type="checkbox" value="copilot" checked><span>Copilot</span></label>
-          <label class="platform-check"><input type="checkbox" value="deepseek" checked><span>DeepSeek</span></label>
-          <label class="platform-check"><input type="checkbox" value="perplexity" checked><span>Perplexity</span></label>
-        </div>
-        <div class="export-keyword-row">
-          <input type="text" id="exportKeyword" class="search-input export-keyword" placeholder="关键词过滤（可选）">
-          <button class="btn btn-ai btn-query" id="exportQueryBtn">🔍 查询</button>
-        </div>
-      </div>
-
-      <!-- 第二步：结果（按平台 → 会话聚类） -->
-      <div class="export-results" id="exportResults">
-        <div class="empty-hint">
-          <div class="empty-icon">📦</div>
-          <p>选择日期范围和平台后点击「查询」</p>
-          <p class="empty-sub">对话会按平台和时间自动聚类</p>
-        </div>
-      </div>
-
-      <!-- 第三步：导出操作（查询后显示） -->
-      <div class="export-actions" id="exportActions" style="display: none;">
-        <div class="export-stats" id="exportStats"></div>
-        <div class="export-format">
-          <label class="radio-label"><input type="radio" name="exportFormat" value="conversation" checked> 对话格式（粘贴到大模型）</label>
-          <label class="radio-label"><input type="radio" name="exportFormat" value="markdown"> Markdown（带时间戳）</label>
-          <label class="radio-label"><input type="radio" name="exportFormat" value="compact"> 精简格式（省token）</label>
-        </div>
-        <div class="export-options">
-          <label class="check-label"><input type="checkbox" id="exportAddGuide" checked> 添加引导语</label>
-        </div>
-        <div class="export-buttons">
-          <button class="btn btn-ai" id="exportCopyBtn">📋 复制到剪贴板</button>
-          <button class="btn btn-outline btn-sm" id="exportDownloadBtn">📥 下载</button>
-        </div>
-        <div class="export-preview-toggle">
-          <button class="btn-link" id="exportPreviewToggle">👁 预览导出内容</button>
-        </div>
-        <div class="export-preview" id="exportPreview" style="display: none;">
-          <pre class="export-preview-text" id="exportPreviewText"></pre>
-        </div>
-      </div>
-      </div> <!-- /sub-export -->
     </section> <!-- /tab-insights -->
 
   </main>

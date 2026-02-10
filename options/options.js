@@ -30,7 +30,8 @@ function initMarkdownRenderer() {
         } catch (e) { /* fallback */ }
       }
       const langLabel = language ? `<span class="code-lang">${language}</span>` : '';
-      return `<div class="code-block">${langLabel}<pre><code class="hljs ${language ? 'language-' + language : ''}">${highlighted}</code></pre></div>`;
+      const escapedForAttr = code.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      return `<div class="code-block" data-code="${escapedForAttr}">${langLabel}<button class="code-copy-btn" title="复制代码">📋</button><pre><code class="hljs ${language ? 'language-' + language : ''}">${highlighted}</code></pre></div>`;
     };
     renderer.codespan = function ({ text }) {
       return `<code class="inline-code">${text}</code>`;
@@ -62,10 +63,16 @@ async function renderMermaidBlocks(container) {
       wrapper.innerHTML = svg;
       block.parentElement.replaceChild(wrapper, block);
     } catch (err) {
-      block.classList.add('mermaid-error');
-      block.innerHTML = `<span class="mermaid-error-hint">⚠️ 图表语法有误</span>\n${escapeHtml(code)}`;
+      const fallback = document.createElement('div');
+      fallback.className = 'code-block mermaid-fallback';
+      fallback.dataset.code = code;
+      fallback.innerHTML = `<span class="code-lang">mermaid ⚠️</span><button class="code-copy-btn" title="复制代码">📋</button><pre><code class="hljs">${escapeHtml(code)}</code></pre>`;
+      block.parentElement.replaceChild(fallback, block);
+      const errDiv = document.getElementById('d' + id);
+      if (errDiv) errDiv.remove();
     }
   }
+  document.querySelectorAll('[id^="dmermaid-"]').forEach(el => el.remove());
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -73,6 +80,19 @@ document.addEventListener('DOMContentLoaded', () => {
   loadLLMConfig();
   loadSettings();
   loadDataStats();
+
+  // 代码块复制按钮
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.code-copy-btn');
+    if (!btn) return;
+    const block = btn.closest('.code-block');
+    if (!block) return;
+    const code = block.dataset.code || block.querySelector('code')?.textContent || '';
+    navigator.clipboard.writeText(code).then(() => {
+      btn.textContent = '✅';
+      setTimeout(() => { btn.textContent = '📋'; }, 1500);
+    });
+  });
   setupEventListeners();
   loadMessagesForToday();
   initSummaryDate();

@@ -404,6 +404,23 @@ input:checked + .slider:before {
   background: #f6f8fa;
   border: 1px solid #e8e8e8;
 }
+.code-copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  background: rgba(255,255,255,0.85);
+  border: 1px solid #e0e0e0;
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 2;
+}
+.code-block:hover .code-copy-btn { opacity: 1; }
+.code-copy-btn:hover { background: #fff; border-color: #667eea; }
+.mermaid-fallback .code-lang { color: #e65100; }
 
 .code-block .code-lang {
   display: block;
