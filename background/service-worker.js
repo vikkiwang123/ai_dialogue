@@ -394,10 +394,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 知识图谱：提取每日主题
+  // 知识图谱：提取每日主题（批量）
   if (request.type === 'EXTRACT_TOPICS') {
     extractTopics(request.options)
       .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // 知识图谱：提取单日主题（异步）
+  if (request.type === 'EXTRACT_TOPICS_SINGLE') {
+    extractTopicsForDate(request.date, request.force)
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // 知识图谱：保存确认版本
+  if (request.type === 'SAVE_CONFIRMED_TOPICS') {
+    saveConfirmedTopics(request.date, request.data)
+      .then(() => sendResponse({ success: true }))
       .catch(err => sendResponse({ success: false, error: err.message }));
     return true;
   }
@@ -743,50 +759,46 @@ async function getContextMessages(options = {}) {
 /**
  * 提取日期范围内每天的学习主题（LLM 提取 + 缓存）
  */
-async function extractTopics(options = {}) {
-  const { dateFrom, dateTo, force = false } = options;
-  if (!dateFrom || !dateTo) throw new Error('请选择日期范围');
+/**
+ * 提取单日主题（异步生成）
+ */
+async function extractTopicsForDate(date, force = false) {
+  if (!date) throw new Error('请提供日期');
 
-  // 1. 获取日期列表
-  const dates = [];
-  let cur = new Date(dateFrom);
-  const end = new Date(dateTo);
-  while (cur <= end) {
-    dates.push(getLocalDateStr(cur));
-    cur.setDate(cur.getDate() + 1);
+  // 检查确认版本（优先）
+  const confirmedKey = `topics_confirmed_${date}`;
+  const confirmed = await new Promise(r => chrome.storage.local.get([confirmedKey], res => r(res[confirmedKey])));
+  if (confirmed && !force) {
+    return { date, ...confirmed, isConfirmed: true };
   }
 
-  // 2. 获取 LLM 配置
+  // 检查缓存
+  const cacheKey = `topics_${date}`;
+  const cached = await new Promise(r => chrome.storage.local.get([cacheKey], res => r(res[cacheKey])));
+  if (cached && !force) {
+    return { date, ...cached, isConfirmed: false };
+  }
+
+  // 获取 LLM 配置
   await loadLLMConfigFromStorage();
   const apiKey = LLM_CONFIG.apiKey;
   if (!apiKey) throw new Error('请先在设置中配置 API Key');
 
-  const allTopics = [];
+  // 获取当天消息
+  const messages = await getMessages(date);
+  if (messages.length === 0) {
+    const emptyResult = { date, topics: [], messageCount: 0, generatedAt: new Date().toISOString() };
+    chrome.storage.local.set({ [cacheKey]: emptyResult });
+    return { ...emptyResult, isConfirmed: false };
+  }
 
-  for (const date of dates) {
-    // 检查缓存
-    const cacheKey = `topics_${date}`;
-    const cached = await new Promise(r => chrome.storage.local.get([cacheKey], res => r(res[cacheKey])));
+  // 构建 prompt
+  const conversationText = messages
+    .slice(0, 100) // 限制条数
+    .map(m => `${m.role === 'user' ? '用户' : 'AI'}(${m.platform || ''}): ${(m.content || '').substring(0, 500)}`)
+    .join('\n');
 
-    if (cached && !force) {
-      allTopics.push({ date, ...cached });
-      continue;
-    }
-
-    // 获取当天消息
-    const messages = await getMessages(date);
-    if (messages.length === 0) {
-      allTopics.push({ date, topics: [], messageCount: 0 });
-      continue;
-    }
-
-    // 构建 prompt
-    const conversationText = messages
-      .slice(0, 100) // 限制条数
-      .map(m => `${m.role === 'user' ? '用户' : 'AI'}(${m.platform || ''}): ${(m.content || '').substring(0, 500)}`)
-      .join('\n');
-
-    const prompt = `分析以下 AI 对话记录，提取今天的学习主题。请以 JSON 格式返回，不要有其他任何文字。
+  const prompt = `分析以下 AI 对话记录，提取今天的学习主题。请以 JSON 格式返回，不要有其他任何文字。
 
 JSON 格式要求：
 {
@@ -807,63 +819,107 @@ depth 含义：1=浅尝辄止 2=有一定深度 3=深入探讨
 对话记录（${date}）：
 ${conversationText}`;
 
+  try {
+    const provider = getCurrentProvider();
+    const model = getCurrentModel();
+    const apiUrl = LLM_CONFIG.providers[LLM_CONFIG.provider]?.apiUrl || provider.apiUrl;
+
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: '你是一个学习分析助手。只返回JSON，不要有任何额外文字、代码块标记或解释。' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 1.0,
+        max_tokens: 1500
+      })
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('[AI监控] 主题提取API错误:', resp.status, errText);
+      throw new Error(`API ${resp.status}: ${errText.substring(0, 100)}`);
+    }
+
+    const data = await resp.json();
+    let content = data.choices?.[0]?.message?.content || '';
+
+    // 清理可能的 markdown 代码块包裹
+    content = content.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+
+    let parsed;
     try {
-      const provider = getCurrentProvider();
-      const model = getCurrentModel();
-      const apiUrl = LLM_CONFIG.providers[LLM_CONFIG.provider]?.apiUrl || provider.apiUrl;
-
-      const resp = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: '你是一个学习分析助手。只返回JSON，不要有任何额外文字、代码块标记或解释。' },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 1.0,
-          max_tokens: 1500
-        })
-      });
-
-      if (!resp.ok) {
-        const errText = await resp.text();
-        console.error('[AI监控] 主题提取API错误:', resp.status, errText);
-        allTopics.push({ date, topics: [], messageCount: messages.length, error: `API ${resp.status}` });
-        continue;
-      }
-
-      const data = await resp.json();
-      let content = data.choices?.[0]?.message?.content || '';
-
-      // 清理可能的 markdown 代码块包裹
-      content = content.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-
-      let parsed;
-      try {
-        parsed = JSON.parse(content);
-      } catch (e) {
-        console.warn('[AI监控] 主题JSON解析失败:', content.substring(0, 200));
-        allTopics.push({ date, topics: [], messageCount: messages.length, error: 'JSON解析失败' });
-        continue;
-      }
-
-      const result = {
-        topics: parsed.topics || [],
-        messageCount: messages.length,
-        generatedAt: new Date().toISOString()
-      };
-
-      // 缓存
-      chrome.storage.local.set({ [cacheKey]: result });
-      allTopics.push({ date, ...result });
-
+      parsed = JSON.parse(content);
     } catch (e) {
-      console.error('[AI监控] 主题提取失败:', date, e);
-      allTopics.push({ date, topics: [], messageCount: messages.length, error: e.message });
+      console.warn('[AI监控] 主题JSON解析失败:', content.substring(0, 200));
+      throw new Error('JSON解析失败');
+    }
+
+    const result = {
+      topics: parsed.topics || [],
+      messageCount: messages.length,
+      generatedAt: new Date().toISOString()
+    };
+
+    // 缓存
+    chrome.storage.local.set({ [cacheKey]: result });
+    return { date, ...result, isConfirmed: false };
+
+  } catch (e) {
+    console.error('[AI监控] 主题提取失败:', date, e);
+    throw e;
+  }
+}
+
+/**
+ * 保存确认版本的主题
+ */
+async function saveConfirmedTopics(date, data) {
+  if (!date || !data) throw new Error('参数不完整');
+  const key = `topics_confirmed_${date}`;
+  const confirmed = {
+    ...data,
+    date,
+    confirmedAt: new Date().toISOString()
+  };
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ [key]: confirmed }, () => {
+      if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+      else resolve();
+    });
+  });
+}
+
+/**
+ * 批量提取主题（兼容旧接口）
+ */
+async function extractTopics(options = {}) {
+  const { dateFrom, dateTo, force = false } = options;
+  if (!dateFrom || !dateTo) throw new Error('请选择日期范围');
+
+  // 获取日期列表
+  const dates = [];
+  let cur = new Date(dateFrom);
+  const end = new Date(dateTo);
+  while (cur <= end) {
+    dates.push(getLocalDateStr(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const allTopics = [];
+  for (const date of dates) {
+    try {
+      const result = await extractTopicsForDate(date, force);
+      allTopics.push(result);
+    } catch (e) {
+      console.error('[AI监控] 批量提取失败:', date, e);
+      allTopics.push({ date, topics: [], messageCount: 0, error: e.message });
     }
   }
 

@@ -1691,6 +1691,57 @@ body {
 }
 .topic-msg-count { margin-left: auto; }
 
+/* 批量生成栏 */
+.batch-generate-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #fff8e1;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+/* 主题卡片占位符 */
+.topic-card-placeholder {
+  padding: 20px;
+  text-align: center;
+  color: #888;
+  font-size: 13px;
+}
+.topic-card-placeholder p {
+  margin-bottom: 10px;
+}
+
+/* 主题卡片操作按钮 */
+.topic-card-actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid #f0f0f0;
+  margin-top: 8px;
+}
+
+/* 主题编辑器 */
+.topics-editor {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  background: #fafafa;
+  color: #333;
+}
+.topics-editor:focus {
+  outline: none;
+  border-color: #667eea;
+  background: #fff;
+}
+
 /* Mermaid 渲染区 */
 .graph-mermaid-container {
   background: #fff;

@@ -206,6 +206,11 @@ function initTabs() {
       btn.classList.add('active');
       document.querySelectorAll('.insights-sub').forEach(p => p.classList.remove('active'));
       document.getElementById('sub-' + sub).classList.add('active');
+      
+      // 切换到图谱视图时自动加载
+      if (sub === 'graph') {
+        refreshTopicsView();
+      }
     });
   });
 }
@@ -1258,8 +1263,14 @@ function initGraph() {
       btn.classList.add('active');
       const scope = btn.dataset.scope;
       document.getElementById('graphCustomRange').style.display = scope === 'custom' ? 'flex' : 'none';
+      // 切换范围时自动加载
+      refreshTopicsView();
     });
   });
+
+  // 自定义日期范围变化时自动加载
+  document.getElementById('graphDateFrom').addEventListener('change', refreshTopicsView);
+  document.getElementById('graphDateTo').addEventListener('change', refreshTopicsView);
 
   // 生成按钮
   document.getElementById('graphGenerateBtn').addEventListener('click', generateGraphAnalysis);
@@ -1270,6 +1281,25 @@ function initGraph() {
   document.getElementById('graphZoomIn').addEventListener('click', () => setGraphZoom(graphZoomLevel + 0.2));
   document.getElementById('graphZoomOut').addEventListener('click', () => setGraphZoom(graphZoomLevel - 0.2));
   document.getElementById('graphZoomReset').addEventListener('click', () => setGraphZoom(1));
+
+  // 主题卡片按钮事件委托
+  document.getElementById('view-topics').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const date = btn.dataset.date;
+
+    if (action === 'generate') generateSingleDate(date);
+    else if (action === 'edit') editTopics(date);
+    else if (action === 'confirm') confirmTopics(date);
+    else if (action === 'regenerate') regenerateTopics(date);
+    else if (action === 'save-edit') saveEditedTopics(date);
+    else if (action === 'cancel-edit') cancelEditTopics(date);
+    else if (action === 'batch-generate') {
+      const dates = btn.dataset.dates.split(',');
+      batchGenerateTopics(dates);
+    }
+  });
 
   // 默认日期
   const today = new Date();
@@ -1304,6 +1334,103 @@ function getGraphDateRange() {
   return { dateFrom, dateTo };
 }
 
+// 加载日期范围内的主题数据（不生成，只加载已有）
+async function loadTopicsForRange(dateFrom, dateTo) {
+  const dates = [];
+  let cur = new Date(dateFrom);
+  const end = new Date(dateTo);
+  while (cur <= end) {
+    dates.push(getLocalDateStr(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const results = [];
+  for (const date of dates) {
+    // 检查确认版本
+    const confirmedKey = `topics_confirmed_${date}`;
+    const confirmed = await new Promise(r => 
+      chrome.storage.local.get([confirmedKey], res => r(res[confirmedKey]))
+    );
+    if (confirmed) {
+      results.push({ date, ...confirmed, isConfirmed: true });
+      continue;
+    }
+
+    // 检查生成版本
+    const cacheKey = `topics_${date}`;
+    const cached = await new Promise(r => 
+      chrome.storage.local.get([cacheKey], res => r(res[cacheKey]))
+    );
+    if (cached) {
+      results.push({ date, ...cached, isConfirmed: false });
+    } else {
+      // 检查是否有消息（待生成）
+      const messages = await new Promise(r => {
+        chrome.runtime.sendMessage({ type: 'GET_MESSAGES', date }, resp => {
+          r(resp?.success ? resp.messages : []);
+        });
+      });
+      results.push({ 
+        date, 
+        topics: [], 
+        messageCount: messages.length,
+        needsGeneration: messages.length > 0
+      });
+    }
+  }
+
+  return results;
+}
+
+// 批量生成选中日期（异步队列）
+async function batchGenerateTopics(dates) {
+  const btn = document.getElementById('graphGenerateBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = `⏳ 生成中 (0/${dates.length})...`;
+
+  let completed = 0;
+  for (const date of dates) {
+    try {
+      await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          type: 'EXTRACT_TOPICS_SINGLE',
+          date,
+          force: false
+        }, resp => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else if (!resp?.success) reject(new Error(resp?.error || '生成失败'));
+          else resolve(resp.data);
+        });
+      });
+      completed++;
+      btn.textContent = `⏳ 生成中 (${completed}/${dates.length})...`;
+      // 更新该日期的卡片
+      updateTopicCard(date);
+    } catch (e) {
+      console.error('[图谱] 生成失败:', date, e);
+      completed++;
+      btn.textContent = `⏳ 生成中 (${completed}/${dates.length})...`;
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = originalText;
+  showToast(`✅ 已完成 ${completed}/${dates.length} 个日期的生成`);
+  // 重新加载视图
+  refreshTopicsView();
+}
+
+// 刷新主题视图
+async function refreshTopicsView() {
+  const { dateFrom, dateTo } = getGraphDateRange();
+  if (!dateFrom || !dateTo) return;
+  
+  const data = await loadTopicsForRange(dateFrom, dateTo);
+  renderTopicsView(data);
+}
+
+// 生成图谱分析（加载已有数据，不强制生成）
 async function generateGraphAnalysis() {
   const { dateFrom, dateTo } = getGraphDateRange();
   if (!dateFrom || !dateTo) {
@@ -1311,126 +1438,288 @@ async function generateGraphAnalysis() {
     return;
   }
 
-  const btn = document.getElementById('graphGenerateBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ 分析中...';
+  // 加载已有主题数据
+  const topicData = await loadTopicsForRange(dateFrom, dateTo);
+  graphTopicsData = topicData;
+  renderTopicsView(topicData);
 
-  // 第一步：提取主题
-  showGraphLoading('view-topics', '正在提取学习主题...');
-  showGraphLoading('view-timeline', '等待主题提取完成...');
-  showGraphLoading('view-knowledge', '等待主题提取完成...');
+  // 生成时间线和知识图谱（基于已有数据）
+  const confirmedTopics = topicData.filter(d => d.isConfirmed || (!d.needsGeneration && d.topics?.length > 0));
+  if (confirmedTopics.length === 0) {
+    showGraphError('view-timeline', '请先生成并确认至少一个日期的主题');
+    showGraphError('view-knowledge', '请先生成并确认至少一个日期的主题');
+    return;
+  }
 
+  // 生成时间线
+  showGraphLoading('view-timeline', '正在生成时间线...');
   try {
-    const topicResp = await new Promise((resolve, reject) => {
+    const timelineResp = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
-        type: 'EXTRACT_TOPICS',
-        options: { dateFrom, dateTo }
+        type: 'GENERATE_TIMELINE',
+        topics: confirmedTopics
       }, resp => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else if (!resp?.success) reject(new Error(resp?.error || '提取失败'));
+        else if (!resp?.success) reject(new Error(resp?.error || '生成失败'));
         else resolve(resp.data);
       });
     });
-
-    graphTopicsData = topicResp;
-    renderTopicsView(topicResp);
-
-    // 第二步：生成时间线
-    showGraphLoading('view-timeline', '正在生成时间线...');
-    try {
-      const timelineResp = await new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage({
-          type: 'GENERATE_TIMELINE',
-          topics: topicResp
-        }, resp => {
-          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-          else if (!resp?.success) reject(new Error(resp?.error || '生成失败'));
-          else resolve(resp.data);
-        });
-      });
-      await renderMermaidView('view-timeline', timelineResp.mermaidCode);
-    } catch (e) {
-      showGraphError('view-timeline', e.message);
-    }
-
-    // 第三步：生成知识图谱
-    showGraphLoading('view-knowledge', '正在生成知识图谱...');
-    try {
-      const direction = document.getElementById('graphDirection').value;
-      const graphResp = await new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage({
-          type: 'GENERATE_KNOWLEDGE_GRAPH',
-          topics: topicResp,
-          direction
-        }, resp => {
-          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-          else if (!resp?.success) reject(new Error(resp?.error || '生成失败'));
-          else resolve(resp.data);
-        });
-      });
-      await renderMermaidView('view-knowledge', graphResp.mermaidCode);
-    } catch (e) {
-      showGraphError('view-knowledge', e.message);
-    }
-
-    document.getElementById('graphToolbar').style.display = 'flex';
-
+    await renderMermaidView('view-timeline', timelineResp.mermaidCode);
   } catch (e) {
-    showGraphError('view-topics', e.message);
     showGraphError('view-timeline', e.message);
+  }
+
+  // 生成知识图谱
+  showGraphLoading('view-knowledge', '正在生成知识图谱...');
+  try {
+    const direction = document.getElementById('graphDirection').value;
+    const graphResp = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: 'GENERATE_KNOWLEDGE_GRAPH',
+        topics: confirmedTopics,
+        direction
+      }, resp => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else if (!resp?.success) reject(new Error(resp?.error || '生成失败'));
+        else resolve(resp.data);
+      });
+    });
+    await renderMermaidView('view-knowledge', graphResp.mermaidCode);
+  } catch (e) {
     showGraphError('view-knowledge', e.message);
   }
 
-  btn.disabled = false;
-  btn.textContent = '✨ 生成分析';
+  document.getElementById('graphToolbar').style.display = 'flex';
 }
 
 function renderTopicsView(allTopics) {
   const container = document.getElementById('view-topics');
 
-  // 过滤掉没有主题的天
-  const daysWithTopics = allTopics.filter(d => d.topics && d.topics.length > 0);
+  // 按日期排序（最新在前）
+  allTopics.sort((a, b) => b.date.localeCompare(a.date));
 
-  if (daysWithTopics.length === 0) {
-    container.innerHTML = `<div class="graph-placeholder"><div class="empty-icon">😕</div><p>该范围内没有提取到学习主题</p><p class="empty-sub">可能对话量不够或没有明确的学习内容</p></div>`;
+  // 检查是否有待生成的日期
+  const needsGen = allTopics.filter(d => d.needsGeneration);
+  const hasData = allTopics.filter(d => d.topics && d.topics.length > 0);
+
+  if (allTopics.length === 0) {
+    container.innerHTML = `<div class="graph-placeholder"><div class="empty-icon">😕</div><p>该范围内没有数据</p></div>`;
     return;
   }
 
   let html = '';
-  daysWithTopics.sort((a, b) => b.date.localeCompare(a.date)); // 最新在前
 
-  daysWithTopics.forEach(day => {
+  // 批量生成按钮（如果有待生成的）
+  if (needsGen.length > 0) {
+    html += `<div class="batch-generate-bar">
+      <span>📋 ${needsGen.length} 个日期待生成</span>
+      <button class="btn btn-ai btn-sm" data-action="batch-generate" data-dates="${needsGen.map(d => d.date).join(',')}">✨ 批量生成</button>
+    </div>`;
+  }
+
+  allTopics.forEach(day => {
     const d = new Date(day.date);
     const weekDay = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
     const dateLabel = `${d.getMonth() + 1}月${d.getDate()}日 (周${weekDay})`;
+    const cardId = `topic-card-${day.date}`;
 
-    html += `<div class="topic-day-card">`;
-    html += `<div class="topic-day-header"><span class="topic-date">📅 ${dateLabel}</span><span class="topic-day-count">${day.messageCount || 0} 条对话</span></div>`;
+    html += `<div class="topic-day-card" id="${cardId}">`;
+    html += `<div class="topic-day-header">
+      <span class="topic-date">📅 ${dateLabel}</span>
+      <span class="topic-day-count">${day.messageCount || 0} 条对话</span>
+      ${day.isConfirmed ? '<span class="confirmed-badge">✅ 已确认</span>' : ''}
+    </div>`;
 
-    day.topics.forEach(topic => {
-      const depthStars = '⭐'.repeat(Math.min(topic.depth || 1, 3));
-      const platformBadges = (topic.platforms || []).map(p => `<span class="topic-platform">${getPlatformName(p)}</span>`).join('');
-      const tags = (topic.tags || []).map(t => `<span class="topic-tag">#${t}</span>`).join('');
+    if (day.needsGeneration) {
+      // 待生成状态
+      html += `<div class="topic-card-placeholder">
+        <p>⏳ 该日期有 ${day.messageCount} 条消息，点击生成主题</p>
+        <button class="btn btn-ai btn-sm" data-action="generate" data-date="${day.date}">✨ 生成</button>
+      </div>`;
+    } else if (!day.topics || day.topics.length === 0) {
+      // 无主题
+      html += `<div class="topic-card-placeholder">
+        <p>😕 该日期没有提取到学习主题</p>
+        <button class="btn btn-ai btn-sm" data-action="generate" data-date="${day.date}">✨ 重新生成</button>
+      </div>`;
+    } else {
+      // 显示主题列表
+      day.topics.forEach((topic, idx) => {
+        const depthStars = '⭐'.repeat(Math.min(topic.depth || 1, 3));
+        const platformBadges = (topic.platforms || []).map(p => `<span class="topic-platform">${getPlatformName(p)}</span>`).join('');
+        const tags = (topic.tags || []).map(t => `<span class="topic-tag">#${t}</span>`).join('');
 
-      html += `
-        <div class="topic-card depth-${topic.depth || 1}">
-          <div class="topic-header">
-            <span class="topic-name">${escapeHtml(topic.name)}</span>
-            <span class="topic-depth">${depthStars}</span>
-          </div>
-          <div class="topic-tags">${tags}</div>
-          ${topic.summary ? `<div class="topic-summary">${escapeHtml(topic.summary)}</div>` : ''}
-          <div class="topic-meta">
-            ${platformBadges}
-            <span class="topic-msg-count">${topic.msgCount || 0} 条</span>
-          </div>
-        </div>`;
-    });
+        html += `
+          <div class="topic-card depth-${topic.depth || 1}">
+            <div class="topic-header">
+              <span class="topic-name">${escapeHtml(topic.name)}</span>
+              <span class="topic-depth">${depthStars}</span>
+            </div>
+            <div class="topic-tags">${tags}</div>
+            ${topic.summary ? `<div class="topic-summary">${escapeHtml(topic.summary)}</div>` : ''}
+            <div class="topic-meta">
+              ${platformBadges}
+              <span class="topic-msg-count">${topic.msgCount || 0} 条</span>
+            </div>
+          </div>`;
+      });
+
+      // 操作按钮
+      html += `<div class="topic-card-actions">
+        <button class="btn btn-outline btn-sm" data-action="edit" data-date="${day.date}">✏️ 编辑</button>
+        ${!day.isConfirmed ? `<button class="btn btn-ai btn-sm" data-action="confirm" data-date="${day.date}">✅ 确认</button>` : ''}
+        <button class="btn btn-outline btn-sm" data-action="regenerate" data-date="${day.date}">🔄 重新生成</button>
+      </div>`;
+    }
 
     html += `</div>`;
   });
 
   container.innerHTML = html;
+}
+
+// 生成单个日期
+async function generateSingleDate(date) {
+  const card = document.getElementById(`topic-card-${date}`);
+  if (!card) return;
+
+  const placeholder = card.querySelector('.topic-card-placeholder');
+  if (placeholder) {
+    placeholder.innerHTML = '<div class="loading-ai"><div class="loading-spinner"></div><p>生成中...</p></div>';
+  }
+
+  try {
+    const resp = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: 'EXTRACT_TOPICS_SINGLE',
+        date,
+        force: false
+      }, res => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else if (!res?.success) reject(new Error(res?.error || '生成失败'));
+        else resolve(res.data);
+      });
+    });
+
+    // 更新卡片
+    updateTopicCard(date, resp);
+    showToast(`✅ ${date} 主题生成完成`);
+  } catch (e) {
+    if (placeholder) {
+      placeholder.innerHTML = `<p>❌ 生成失败: ${escapeHtml(e.message)}</p><button class="btn btn-ai btn-sm" data-action="generate" data-date="${date}">重试</button>`;
+    }
+    showToast(`❌ 生成失败: ${e.message}`);
+  }
+}
+
+// 更新单个日期卡片
+async function updateTopicCard(date, data = null) {
+  if (!data) {
+    // 重新加载
+    const resp = await new Promise(r => {
+      chrome.runtime.sendMessage({ type: 'EXTRACT_TOPICS_SINGLE', date, force: false }, res => {
+        r(res?.success ? res.data : null);
+      });
+    });
+    if (!resp) return;
+    data = resp;
+  }
+
+  // 重新渲染整个视图（简单方案）
+  await refreshTopicsView();
+}
+
+// 编辑主题
+function editTopics(date) {
+  // 获取当前数据
+  const card = document.getElementById(`topic-card-${date}`);
+  if (!card) return;
+
+  // 从存储中读取
+  chrome.storage.local.get([`topics_${date}`, `topics_confirmed_${date}`], items => {
+    const data = items[`topics_confirmed_${date}`] || items[`topics_${date}`];
+    if (!data) return;
+
+    const jsonText = JSON.stringify(data.topics || [], null, 2);
+    const actionsDiv = card.querySelector('.topic-card-actions');
+    if (!actionsDiv) return;
+
+    actionsDiv.innerHTML = `
+      <textarea class="topics-editor" rows="10">${escapeHtml(jsonText)}</textarea>
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <button class="btn btn-ai btn-sm" data-action="save-edit" data-date="${date}">💾 保存</button>
+        <button class="btn btn-outline btn-sm" data-action="cancel-edit" data-date="${date}">取消</button>
+      </div>
+    `;
+  });
+}
+
+// 保存编辑
+async function saveEditedTopics(date) {
+  const card = document.getElementById(`topic-card-${date}`);
+  if (!card) return;
+
+  const textarea = card.querySelector('.topics-editor');
+  if (!textarea) return;
+
+  try {
+    const topics = JSON.parse(textarea.value);
+    if (!Array.isArray(topics)) throw new Error('必须是主题数组');
+
+    // 保存到生成版本（覆盖）
+    const data = {
+      date,
+      topics,
+      messageCount: 0, // 从原数据获取
+      generatedAt: new Date().toISOString()
+    };
+
+    chrome.storage.local.get([`topics_${date}`], items => {
+      if (items[`topics_${date}`]) {
+        data.messageCount = items[`topics_${date}`].messageCount;
+      }
+      chrome.storage.local.set({ [`topics_${date}`]: data }, () => {
+        updateTopicCard(date, data);
+        showToast('✅ 已保存');
+      });
+    });
+  } catch (e) {
+    showToast(`❌ JSON格式错误: ${e.message}`);
+  }
+}
+
+// 取消编辑
+function cancelEditTopics(date) {
+  updateTopicCard(date);
+}
+
+// 确认主题
+async function confirmTopics(date) {
+  chrome.storage.local.get([`topics_${date}`], items => {
+    const data = items[`topics_${date}`];
+    if (!data) {
+      showToast('⚠️ 请先生成主题');
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      type: 'SAVE_CONFIRMED_TOPICS',
+      date,
+      data
+    }, resp => {
+      if (resp?.success) {
+        showToast('✅ 已确认');
+        updateTopicCard(date);
+      } else {
+        showToast('❌ 确认失败');
+      }
+    });
+  });
+}
+
+// 重新生成
+async function regenerateTopics(date) {
+  await generateSingleDate(date);
 }
 
 async function renderMermaidView(viewId, mermaidCode) {
