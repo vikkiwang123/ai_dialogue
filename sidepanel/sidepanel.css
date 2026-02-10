@@ -119,10 +119,10 @@ body {
 
 .tab-btn {
   flex: 1;
-  padding: 11px 2px;
+  padding: 12px 8px;
   border: none;
   background: none;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 500;
   color: #888;
   cursor: pointer;
@@ -1540,6 +1540,38 @@ body {
 /* ============================================
    知识图谱 Tab
    ============================================ */
+
+/* 洞察 二级标签 */
+.insights-sub-tabs {
+  display: flex;
+  gap: 0;
+  background: linear-gradient(135deg, #667eea10, #764ba210);
+  border-radius: 10px;
+  padding: 3px;
+  margin-bottom: 12px;
+}
+.insights-sub-btn {
+  flex: 1;
+  padding: 9px 4px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: #888;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+.insights-sub-btn:hover { color: #555; background: rgba(255,255,255,0.5); }
+.insights-sub-btn.active {
+  background: #fff;
+  color: #667eea;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+.insights-sub { display: none; }
+.insights-sub.active { display: block; }
 
 /* 子视图切换 */
 .graph-sub-tabs {

@@ -46,9 +46,18 @@ if (typeof LLM_CONFIG === 'undefined') {
     },
     model: '',
     apiKey: '',
-    generation: { temperature: 0.7, maxTokens: 2000, maxInputChars: 6000 },
+    generation: { temperature: 1.0, maxTokens: 2000, maxInputChars: 6000 },
     systemPrompt: '你是一个学习总结助手。请分析对话记录，生成结构化的每日学习总结，包括：今日主题、关键收获、实践要点、学习概况、明日建议。用中文回复。'
   };
+}
+
+// 获取本地日期字符串（东八区等时区不受UTC影响）
+function getLocalDateStr(date) {
+  const d = date ? new Date(date) : new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 // 如果辅助函数也未定义（外部文件加载失败时），定义它们
@@ -467,7 +476,7 @@ async function handleAISummary(date, force) {
 
   console.log('[AI监控] 开始AI总结，消息数:', messages.length, force ? '(强制重新生成)' : '');
   
-  const summaryKey = `summary_${date || new Date().toISOString().split('T')[0]}`;
+  const summaryKey = `summary_${date || getLocalDateStr()}`;
 
   if (!force) {
     const cached = await new Promise(resolve => {
@@ -498,7 +507,7 @@ async function handleAISummary(date, force) {
 // 手动保存消息（用户粘贴的对话）
 // ============================================
 async function saveManualMessages(messages) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateStr();
   const key = `messages_${today}`;
 
   return new Promise((resolve, reject) => {
@@ -743,7 +752,7 @@ async function extractTopics(options = {}) {
   let cur = new Date(dateFrom);
   const end = new Date(dateTo);
   while (cur <= end) {
-    dates.push(cur.toISOString().split('T')[0]);
+    dates.push(getLocalDateStr(cur));
     cur.setDate(cur.getDate() + 1);
   }
 
@@ -815,7 +824,7 @@ ${conversationText}`;
             { role: 'system', content: '你是一个学习分析助手。只返回JSON，不要有任何额外文字、代码块标记或解释。' },
             { role: 'user', content: prompt }
           ],
-          temperature: 0.3,
+          temperature: 1.0,
           max_tokens: 1500
         })
       });
@@ -867,6 +876,12 @@ ${conversationText}`;
 async function generateTimeline(allTopics) {
   if (!allTopics || allTopics.length === 0) throw new Error('没有主题数据');
 
+  // 检查是否有实际主题
+  const daysWithTopics = allTopics.filter(d => d.topics && d.topics.length > 0);
+  if (daysWithTopics.length === 0) {
+    throw new Error('没有提取到任何主题，无法生成时间线');
+  }
+
   // 按周分组
   const weeks = {};
   allTopics.forEach(day => {
@@ -874,7 +889,7 @@ async function generateTimeline(allTopics) {
     const d = new Date(day.date);
     const weekStart = new Date(d);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); // 周一
-    const weekKey = weekStart.toISOString().split('T')[0];
+    const weekKey = getLocalDateStr(weekStart);
     if (!weeks[weekKey]) weeks[weekKey] = [];
     weeks[weekKey].push(day);
   });
@@ -886,7 +901,7 @@ async function generateTimeline(allTopics) {
     weekIdx++;
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 6);
-    const label = `第${weekIdx}周 (${formatShortDate(weekStart)}~${formatShortDate(weekEnd.toISOString().split('T')[0])})`;
+    const label = `第${weekIdx}周 (${formatShortDate(weekStart)}~${formatShortDate(getLocalDateStr(weekEnd))})`;
     mermaid += `    section ${label}\n`;
 
     days.sort((a, b) => a.date.localeCompare(b.date));
@@ -912,14 +927,20 @@ async function generateKnowledgeGraph(allTopics, direction = 'TD') {
 
   // 把所有主题汇总成文本
   let topicSummary = '';
+  let topicCount = 0;
   allTopics.forEach(day => {
     if (!day.topics || day.topics.length === 0) return;
     topicSummary += `\n[${day.date}]\n`;
     day.topics.forEach(t => {
+      topicCount++;
       topicSummary += `- ${t.name} (标签: ${(t.tags || []).join(', ')}; 深度: ${'⭐'.repeat(t.depth || 1)})\n`;
       if (t.summary) topicSummary += `  ${t.summary}\n`;
     });
   });
+
+  if (topicCount === 0) {
+    throw new Error('没有提取到任何主题，无法生成知识图谱。请确认日期范围内有对话记录。');
+  }
 
   const prompt = `你是一个资深的知识图谱架构师。根据以下学习主题记录，生成 Mermaid 语法的知识图谱。
 
@@ -951,7 +972,7 @@ ${topicSummary}`;
         { role: 'system', content: '你是一个知识图谱架构师。只输出 Mermaid 代码，不要有任何解释文字或代码块标记。' },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.4,
+      temperature: 1.0,
       max_tokens: 2000
     })
   });
@@ -1011,7 +1032,7 @@ async function getPlatformStatus() {
       }
 
       // 同时查看今天有没有该平台的消息
-      const today = new Date().toISOString().split('T')[0];
+      const today = getLocalDateStr();
       chrome.storage.local.get([`messages_${today}`], result => {
         const messages = result[`messages_${today}`] || [];
         for (const [key] of Object.entries(status)) {
@@ -1073,7 +1094,7 @@ chrome.alarms.onAlarm.addListener(async alarm => {
 
 async function handleDailyReminder() {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateStr();
     const messages = await getMessages(today);
     const count = messages.length;
 
@@ -1117,38 +1138,76 @@ chrome.notifications.onClicked.addListener(notificationId => {
 // 存储操作
 // ============================================
 async function saveMessage(data) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateStr();
   const key = `messages_${today}`;
 
   return new Promise((resolve, reject) => {
     chrome.storage.local.get([key], result => {
       const messages = result[key] || [];
-      
-      const exists = messages.some(msg =>
-        msg.id === data.id ||
-        (msg.content === data.content && msg.role === data.role &&
-         Math.abs(new Date(msg.timestamp) - new Date(data.timestamp)) < 5000)
-      );
+      const newContent = (data.content || '').trim();
+      const newNorm = newContent.replace(/\s+/g, ' ').substring(0, 200);
 
-      if (!exists) {
-        messages.push(data);
-        chrome.storage.local.set({ [key]: messages }, () => {
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError);
-          } else {
-            console.log('[AI监控] ✅ 消息已保存，今日总数:', messages.length);
-            resolve();
+      // 1. 完全相同的消息 → 跳过
+      const exactDup = messages.some(msg =>
+        msg.id === data.id ||
+        (msg.content === newContent && msg.role === data.role)
+      );
+      if (exactDup) { resolve(); return; }
+
+      // 2. 前缀检测：如果新消息是某条旧消息的更长版本 → 替换旧的
+      //    或者旧消息是新消息的子串 → 替换旧的（流式AB→ABC→ABCD场景）
+      let replaced = false;
+      for (let i = 0; i < messages.length; i++) {
+        const oldContent = (messages[i].content || '').trim();
+        const oldNorm = oldContent.replace(/\s+/g, ' ').substring(0, 200);
+
+        if (messages[i].role !== data.role) continue;
+
+        // 新内容包含旧内容（旧的是新的前缀）→ 替换
+        if (newContent.length > oldContent.length && newContent.startsWith(oldContent.substring(0, Math.min(oldContent.length, 100)))) {
+          console.log('[AI监控] ♻️ 替换流式残留:', oldContent.substring(0, 40), '→', newContent.substring(0, 40));
+          messages[i] = { ...messages[i], ...data, wordCount: newContent.length };
+          replaced = true;
+          break;
+        }
+
+        // 旧内容包含新内容（新的是旧的前缀）→ 跳过，保留更长的
+        if (oldContent.length >= newContent.length && oldContent.startsWith(newContent.substring(0, Math.min(newContent.length, 100)))) {
+          resolve(); return;
+        }
+
+        // 归一化前缀匹配（处理空白差异）
+        if (newNorm.length > 5 && oldNorm.length > 5) {
+          if (newNorm.startsWith(oldNorm) || oldNorm.startsWith(newNorm)) {
+            if (newContent.length > oldContent.length) {
+              messages[i] = { ...messages[i], ...data, wordCount: newContent.length };
+              replaced = true;
+            }
+            // 否则跳过（保留更长的）
+            if (!replaced) { resolve(); return; }
+            break;
           }
-        });
-      } else {
-        resolve();
+        }
       }
+
+      if (!replaced) {
+        messages.push(data);
+      }
+
+      chrome.storage.local.set({ [key]: messages }, () => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          console.log('[AI监控]', replaced ? '♻️ 已更新' : '✅ 已保存', '今日总数:', messages.length);
+          resolve();
+        }
+      });
     });
   });
 }
 
 async function getTodayStats() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateStr();
   const key = `messages_${today}`;
 
   return new Promise(resolve => {
@@ -1170,7 +1229,7 @@ async function getTodayStats() {
 }
 
 async function getMessages(date) {
-  const targetDate = date || new Date().toISOString().split('T')[0];
+  const targetDate = date || getLocalDateStr();
   const key = `messages_${targetDate}`;
 
   return new Promise(resolve => {

@@ -1,4 +1,10 @@
 // Options页面脚本
+
+function getLocalDateStr(date) {
+  const d = date ? new Date(date) : new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 let mermaidReady = false;
 
 function initMarkdownRenderer() {
@@ -95,7 +101,7 @@ function loadLLMConfig() {
     document.getElementById('llmApiKey').value = config.apiKey || '';
 
     // 生成参数
-    const temp = (config.generation?.temperature || 0.7);
+    const temp = (config.generation?.temperature || 1.0);
     document.getElementById('llmTemperature').value = Math.round(temp * 100);
     document.getElementById('temperatureValue').textContent = temp.toFixed(1);
     document.getElementById('llmMaxTokens').value = config.generation?.maxTokens || 2000;
@@ -241,7 +247,7 @@ function toggleApiKeyVisibility() {
 // AI总结 (流式输出)
 // ============================================
 function initSummaryDate() {
-  document.getElementById('summaryDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('summaryDate').value = getLocalDateStr();
 }
 
 function generateAISummary(force = false) {
@@ -499,7 +505,7 @@ function setupEventListeners() {
 // 消息历史
 // ============================================
 function loadMessagesForToday() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateStr();
   document.getElementById('dateSelector').value = today;
   loadMessagesForDate(today);
 }
@@ -558,7 +564,7 @@ function exportData() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ai-dialogue-export-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `ai-dialogue-export-${getLocalDateStr()}.json`;
     a.click();
     URL.revokeObjectURL(url);
     showNotification('数据已导出');

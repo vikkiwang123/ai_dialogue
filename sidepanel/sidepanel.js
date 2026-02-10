@@ -155,6 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // 标签页切换
 // ============================================
 function initTabs() {
+  // 主 Tab 切换（3个）
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const tabId = btn.dataset.tab;
@@ -162,8 +163,18 @@ function initTabs() {
       btn.classList.add('active');
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.getElementById('tab-' + tabId).classList.add('active');
-      if (tabId === 'messages') loadMessages();
-      if (tabId === 'search') document.getElementById('searchInput').focus();
+      if (tabId === 'dialogue') loadMessages();
+    });
+  });
+
+  // 洞察 二级 Tab 切换
+  document.querySelectorAll('.insights-sub-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sub = btn.dataset.sub;
+      document.querySelectorAll('.insights-sub-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.insights-sub').forEach(p => p.classList.remove('active'));
+      document.getElementById('sub-' + sub).classList.add('active');
     });
   });
 }
@@ -172,7 +183,7 @@ function initTabs() {
 // 日期初始化
 // ============================================
 function initDates() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateStr();
   document.getElementById('dateSelector').value = today;
   document.getElementById('summaryDate').value = today;
 }
@@ -310,28 +321,30 @@ let searchTimer = null;
 function initSearch() {
   const input = document.getElementById('searchInput');
   const clearBtn = document.getElementById('searchClear');
+  const searchResults = document.getElementById('searchResults');
+  const messagesSection = document.getElementById('messagesSection');
+
+  function showSearchMode(on) {
+    searchResults.style.display = on ? 'block' : 'none';
+    messagesSection.style.display = on ? 'none' : 'block';
+  }
 
   input.addEventListener('input', () => {
     clearTimeout(searchTimer);
     clearBtn.style.display = input.value ? 'flex' : 'none';
 
     if (input.value.trim().length >= 2) {
-      // 防抖 300ms
+      showSearchMode(true);
       searchTimer = setTimeout(() => performSearch(), 300);
     } else if (input.value.trim().length === 0) {
-      document.getElementById('searchResults').innerHTML = `
-        <div class="empty-hint">
-          <div class="empty-icon">🔍</div>
-          <p>输入关键词搜索所有对话记录</p>
-          <p class="empty-sub">支持多个关键词，用空格分隔</p>
-        </div>
-      `;
+      showSearchMode(false);
     }
   });
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && input.value.trim().length >= 2) {
       clearTimeout(searchTimer);
+      showSearchMode(true);
       performSearch();
     }
   });
@@ -339,18 +352,16 @@ function initSearch() {
   clearBtn.addEventListener('click', () => {
     input.value = '';
     clearBtn.style.display = 'none';
-    document.getElementById('searchResults').innerHTML = `
-      <div class="empty-hint">
-        <div class="empty-icon">🔍</div>
-        <p>输入关键词搜索所有对话记录</p>
-        <p class="empty-sub">支持多个关键词，用空格分隔</p>
-      </div>
-    `;
+    showSearchMode(false);
     input.focus();
   });
 
-  document.getElementById('searchPlatform').addEventListener('change', performSearch);
-  document.getElementById('searchRole').addEventListener('change', performSearch);
+  document.getElementById('searchPlatform').addEventListener('change', () => {
+    if (input.value.trim().length >= 2) performSearch();
+  });
+  document.getElementById('searchRole').addEventListener('change', () => {
+    if (input.value.trim().length >= 2) performSearch();
+  });
 }
 
 function performSearch() {
@@ -758,8 +769,8 @@ function initExport() {
   const today = new Date();
   const weekAgo = new Date(today);
   weekAgo.setDate(weekAgo.getDate() - 7);
-  document.getElementById('exportDateTo').value = today.toISOString().split('T')[0];
-  document.getElementById('exportDateFrom').value = weekAgo.toISOString().split('T')[0];
+  document.getElementById('exportDateTo').value = getLocalDateStr(today);
+  document.getElementById('exportDateFrom').value = getLocalDateStr(weekAgo);
 
   // 查询按钮
   document.getElementById('exportQueryBtn').addEventListener('click', queryExportMessages);
@@ -1148,10 +1159,10 @@ function initGraph() {
 
   // 默认日期
   const today = new Date();
-  document.getElementById('graphDateTo').value = today.toISOString().split('T')[0];
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-  document.getElementById('graphDateFrom').value = weekAgo.toISOString().split('T')[0];
+  document.getElementById('graphDateTo').value = getLocalDateStr(today);
+  const weekAgo2 = new Date(today);
+  weekAgo2.setDate(weekAgo2.getDate() - 7);
+  document.getElementById('graphDateFrom').value = getLocalDateStr(weekAgo2);
 }
 
 function getGraphDateRange() {
@@ -1160,17 +1171,17 @@ function getGraphDateRange() {
   let dateFrom, dateTo;
 
   if (activeScope === 'today') {
-    dateFrom = dateTo = today.toISOString().split('T')[0];
+    dateFrom = dateTo = getLocalDateStr(today);
   } else if (activeScope === 'week') {
-    dateTo = today.toISOString().split('T')[0];
+    dateTo = getLocalDateStr(today);
     const d = new Date(today);
     d.setDate(d.getDate() - 6);
-    dateFrom = d.toISOString().split('T')[0];
+    dateFrom = getLocalDateStr(d);
   } else if (activeScope === 'month') {
-    dateTo = today.toISOString().split('T')[0];
+    dateTo = getLocalDateStr(today);
     const d = new Date(today);
     d.setDate(d.getDate() - 29);
-    dateFrom = d.toISOString().split('T')[0];
+    dateFrom = getLocalDateStr(d);
   } else {
     dateFrom = document.getElementById('graphDateFrom').value;
     dateTo = document.getElementById('graphDateTo').value;
@@ -1383,7 +1394,7 @@ function downloadGraphSvg() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `knowledge-graph-${new Date().toISOString().split('T')[0]}.svg`;
+  a.download = `knowledge-graph-${getLocalDateStr()}.svg`;
   a.click();
   URL.revokeObjectURL(url);
   showToast('✅ SVG 已下载');
@@ -1427,7 +1438,7 @@ function setupEventListeners() {
     loadStats();
     checkStatus();
     loadPlatformHealth();
-    if (document.getElementById('tab-messages').classList.contains('active')) loadMessages();
+    if (document.getElementById('tab-dialogue').classList.contains('active')) loadMessages();
   });
 
   document.getElementById('settingsBtn').addEventListener('click', () => {
@@ -1467,6 +1478,14 @@ function setupEventListeners() {
 // ============================================
 // 工具函数
 // ============================================
+function getLocalDateStr(date) {
+  const d = date ? new Date(date) : new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function getPlatformName(platform) {
   const names = {
     chatgpt: 'ChatGPT', claude: 'Claude', copilot: 'Copilot',

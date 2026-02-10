@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI对话监控助手",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "自动监控和记录您与AI的对话，生成每日学习收获总结。支持ChatGPT、Claude、Gemini、Copilot、DeepSeek、Perplexity等平台。",
   "permissions": [
     "storage",

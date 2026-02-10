@@ -26,20 +26,17 @@
     </div>
   </header>
 
-  <!-- 标签页导航 -->
+  <!-- 主标签页导航（3个） -->
   <nav class="tab-nav">
-    <button class="tab-btn active" data-tab="dashboard">📊 概览</button>
-    <button class="tab-btn" data-tab="messages">💬 消息</button>
-    <button class="tab-btn" data-tab="search">🔍 搜索</button>
-    <button class="tab-btn" data-tab="export">📦 导出</button>
-    <button class="tab-btn" data-tab="graph">🧠 图谱</button>
-    <button class="tab-btn" data-tab="summary">📝 总结</button>
+    <button class="tab-btn active" data-tab="dashboard">📊 首页</button>
+    <button class="tab-btn" data-tab="dialogue">💬 对话</button>
+    <button class="tab-btn" data-tab="insights">🧠 洞察</button>
   </nav>
 
   <!-- 标签页内容 -->
   <main class="content">
 
-    <!-- 概览 -->
+    <!-- ====== 首页 ====== -->
     <section class="tab-panel active" id="tab-dashboard">
       <div class="stats-grid">
         <div class="stat-card stat-total">
@@ -72,7 +69,6 @@
         </div>
       </div>
 
-      <!-- 平台健康状态 -->
       <div class="section-card">
         <h3>📡 平台状态</h3>
         <div class="platform-health" id="platformHealth">
@@ -87,7 +83,6 @@
         </div>
       </div>
 
-      <!-- 每日提醒设置 -->
       <div class="section-card">
         <h3>🔔 每日提醒</h3>
         <div class="reminder-settings">
@@ -106,24 +101,9 @@
       </div>
     </section>
 
-    <!-- 消息列表 -->
-    <section class="tab-panel" id="tab-messages">
-      <div class="messages-toolbar">
-        <input type="date" id="dateSelector" class="date-input">
-        <select id="roleFilter" class="filter-select">
-          <option value="all">全部</option>
-          <option value="user">我的消息</option>
-          <option value="assistant">AI回复</option>
-        </select>
-        <button class="icon-btn add-btn" id="manualAddBtn" title="手动添加对话">➕</button>
-      </div>
-      <div class="messages-list" id="messagesList">
-        <div class="empty-hint">选择日期查看消息</div>
-      </div>
-    </section>
-
-    <!-- 搜索 -->
-    <section class="tab-panel" id="tab-search">
+    <!-- ====== 对话（消息 + 搜索 合并） ====== -->
+    <section class="tab-panel" id="tab-dialogue">
+      <!-- 搜索栏（始终可见） -->
       <div class="search-toolbar">
         <div class="search-bar">
           <span class="search-icon">🔍</span>
@@ -147,17 +127,113 @@
           </select>
         </div>
       </div>
-      <div class="search-results" id="searchResults">
-        <div class="empty-hint">
-          <div class="empty-icon">🔍</div>
-          <p>输入关键词搜索所有对话记录</p>
-          <p class="empty-sub">支持多个关键词，用空格分隔</p>
+
+      <!-- 搜索结果区（有搜索时显示） -->
+      <div class="search-results" id="searchResults" style="display:none;"></div>
+
+      <!-- 日期消息列表（无搜索时显示） -->
+      <div id="messagesSection">
+        <div class="messages-toolbar">
+          <input type="date" id="dateSelector" class="date-input">
+          <select id="roleFilter" class="filter-select">
+            <option value="all">全部</option>
+            <option value="user">我的消息</option>
+            <option value="assistant">AI回复</option>
+          </select>
+          <button class="icon-btn add-btn" id="manualAddBtn" title="手动添加对话">➕</button>
+        </div>
+        <div class="messages-list" id="messagesList">
+          <div class="empty-hint">选择日期查看消息</div>
         </div>
       </div>
     </section>
 
-    <!-- 上下文导出 -->
-    <section class="tab-panel" id="tab-export">
+    <!-- ====== 洞察（总结 + 图谱 + 导出 合并） ====== -->
+    <section class="tab-panel" id="tab-insights">
+      <!-- 二级标签 -->
+      <div class="insights-sub-tabs">
+        <button class="insights-sub-btn active" data-sub="summary">📝 总结</button>
+        <button class="insights-sub-btn" data-sub="graph">🧠 图谱</button>
+        <button class="insights-sub-btn" data-sub="export">📦 导出</button>
+      </div>
+
+      <!-- 子页：AI总结 -->
+      <div class="insights-sub active" id="sub-summary">
+        <div class="summary-toolbar">
+          <input type="date" id="summaryDate" class="date-input">
+          <div class="summary-actions">
+            <button class="btn btn-ai" id="generateSummary">🤖 生成总结</button>
+            <button class="btn btn-outline btn-sm" id="regenerateSummary" style="display: none;">🔄 重新生成</button>
+          </div>
+        </div>
+        <div class="summary-result" id="summaryResult">
+          <div class="empty-hint">
+            <div class="empty-icon">📝</div>
+            <p>点击「生成总结」让AI分析你今天的对话</p>
+            <p class="empty-sub">需要先配置API Key</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 子页：知识图谱 -->
+      <div class="insights-sub" id="sub-graph">
+        <div class="graph-sub-tabs">
+          <button class="graph-sub-btn active" data-view="topics">📅 每日主题</button>
+          <button class="graph-sub-btn" data-view="timeline">📈 时间线</button>
+          <button class="graph-sub-btn" data-view="knowledge">🕸️ 知识图谱</button>
+        </div>
+
+        <div class="graph-scope">
+          <button class="scope-btn active" data-scope="today">今日</button>
+          <button class="scope-btn" data-scope="week">本周</button>
+          <button class="scope-btn" data-scope="month">本月</button>
+          <button class="scope-btn" data-scope="custom">自定义</button>
+          <div class="scope-custom" id="graphCustomRange" style="display:none;">
+            <input type="date" id="graphDateFrom" class="date-input date-sm">
+            <span>→</span>
+            <input type="date" id="graphDateTo" class="date-input date-sm">
+          </div>
+        </div>
+
+        <div class="graph-actions-bar">
+          <button class="btn btn-ai" id="graphGenerateBtn">✨ 生成分析</button>
+          <select id="graphDirection" class="filter-select filter-sm" title="图谱方向">
+            <option value="TD">↓ 上下</option>
+            <option value="LR">→ 左右</option>
+          </select>
+        </div>
+
+        <div class="graph-view active" id="view-topics">
+          <div class="graph-placeholder">
+            <div class="empty-icon">📅</div>
+            <p>点击「生成分析」提取每日学习主题</p>
+            <p class="empty-sub">LLM 会自动分析对话并提炼主题、标签、深度</p>
+          </div>
+        </div>
+        <div class="graph-view" id="view-timeline">
+          <div class="graph-placeholder">
+            <div class="empty-icon">📈</div>
+            <p>生成分析后可查看学习时间线</p>
+          </div>
+        </div>
+        <div class="graph-view" id="view-knowledge">
+          <div class="graph-placeholder">
+            <div class="empty-icon">🕸️</div>
+            <p>生成分析后可查看知识图谱</p>
+          </div>
+        </div>
+
+        <div class="graph-toolbar" id="graphToolbar" style="display:none;">
+          <button class="btn-icon-sm" id="graphCopyMermaid" title="复制 Mermaid 代码">📋 代码</button>
+          <button class="btn-icon-sm" id="graphDownloadSvg" title="下载 SVG">📥 SVG</button>
+          <button class="btn-icon-sm" id="graphZoomIn" title="放大">🔍+</button>
+          <button class="btn-icon-sm" id="graphZoomOut" title="缩小">🔍−</button>
+          <button class="btn-icon-sm" id="graphZoomReset" title="重置缩放">↺</button>
+        </div>
+      </div>
+
+      <!-- 子页：上下文导出 -->
+      <div class="insights-sub" id="sub-export">
       <!-- 第一步：筛选 -->
       <div class="export-filter section-card">
         <h3>🎯 筛选对话</h3>
@@ -217,92 +293,8 @@
           <pre class="export-preview-text" id="exportPreviewText"></pre>
         </div>
       </div>
-    </section>
-
-    <!-- 知识图谱 -->
-    <section class="tab-panel" id="tab-graph">
-      <!-- 子视图切换 -->
-      <div class="graph-sub-tabs">
-        <button class="graph-sub-btn active" data-view="topics">📅 每日主题</button>
-        <button class="graph-sub-btn" data-view="timeline">📈 时间线</button>
-        <button class="graph-sub-btn" data-view="knowledge">🕸️ 知识图谱</button>
-      </div>
-
-      <!-- 范围选择 -->
-      <div class="graph-scope">
-        <button class="scope-btn active" data-scope="today">今日</button>
-        <button class="scope-btn" data-scope="week">本周</button>
-        <button class="scope-btn" data-scope="month">本月</button>
-        <button class="scope-btn" data-scope="custom">自定义</button>
-        <div class="scope-custom" id="graphCustomRange" style="display:none;">
-          <input type="date" id="graphDateFrom" class="date-input date-sm">
-          <span>→</span>
-          <input type="date" id="graphDateTo" class="date-input date-sm">
-        </div>
-      </div>
-
-      <div class="graph-actions-bar">
-        <button class="btn btn-ai" id="graphGenerateBtn">✨ 生成分析</button>
-        <select id="graphDirection" class="filter-select filter-sm" title="图谱方向">
-          <option value="TD">↓ 上下</option>
-          <option value="LR">→ 左右</option>
-        </select>
-      </div>
-
-      <!-- 子视图① 每日主题 -->
-      <div class="graph-view active" id="view-topics">
-        <div class="graph-placeholder">
-          <div class="empty-icon">📅</div>
-          <p>点击「生成分析」提取每日学习主题</p>
-          <p class="empty-sub">LLM 会自动分析对话并提炼主题、标签、深度</p>
-        </div>
-      </div>
-
-      <!-- 子视图② 时间线 -->
-      <div class="graph-view" id="view-timeline">
-        <div class="graph-placeholder">
-          <div class="empty-icon">📈</div>
-          <p>生成分析后可查看学习时间线</p>
-          <p class="empty-sub">Mermaid Timeline 可视化你的学习旅程</p>
-        </div>
-      </div>
-
-      <!-- 子视图③ 知识图谱 -->
-      <div class="graph-view" id="view-knowledge">
-        <div class="graph-placeholder">
-          <div class="empty-icon">🕸️</div>
-          <p>生成分析后可查看知识图谱</p>
-          <p class="empty-sub">实体、技术点、因果关系一览无余</p>
-        </div>
-      </div>
-
-      <!-- 底部操作栏 -->
-      <div class="graph-toolbar" id="graphToolbar" style="display:none;">
-        <button class="btn-icon-sm" id="graphCopyMermaid" title="复制 Mermaid 代码">📋 代码</button>
-        <button class="btn-icon-sm" id="graphDownloadSvg" title="下载 SVG">📥 SVG</button>
-        <button class="btn-icon-sm" id="graphZoomIn" title="放大">🔍+</button>
-        <button class="btn-icon-sm" id="graphZoomOut" title="缩小">🔍−</button>
-        <button class="btn-icon-sm" id="graphZoomReset" title="重置缩放">↺</button>
-      </div>
-    </section>
-
-    <!-- AI总结 -->
-    <section class="tab-panel" id="tab-summary">
-      <div class="summary-toolbar">
-        <input type="date" id="summaryDate" class="date-input">
-        <div class="summary-actions">
-          <button class="btn btn-ai" id="generateSummary">🤖 生成总结</button>
-          <button class="btn btn-outline btn-sm" id="regenerateSummary" style="display: none;">🔄 重新生成</button>
-        </div>
-      </div>
-      <div class="summary-result" id="summaryResult">
-        <div class="empty-hint">
-          <div class="empty-icon">🧠</div>
-          <p>点击「生成总结」让AI分析你今天的对话</p>
-          <p class="empty-sub">需要先配置API Key</p>
-        </div>
-      </div>
-    </section>
+      </div> <!-- /sub-export -->
+    </section> <!-- /tab-insights -->
 
   </main>
 

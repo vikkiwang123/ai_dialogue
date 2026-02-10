@@ -62,6 +62,13 @@
     return (text || '').trim().replace(/\s+/g, ' ').substring(0, 200);
   }
 
+  /**
+   * 消息防抖：同一个 DOM 元素在流式输出期间内容不断变化，
+   * 用防抖确保只在内容稳定后才发送一次。
+   */
+  const pendingMessages = new Map(); // elementId → { timer, el }
+  const DEBOUNCE_MS = 2000; // 2秒无变化才认为输出完成
+
   // ============================================
   // ChatGPT 适配器
   // ============================================
@@ -958,7 +965,7 @@
       }
     }, 3000);
 
-    // MutationObserver
+    // MutationObserver — 只监听结构变化（不监听characterData，改用轮询防抖）
     observer = new MutationObserver(mutations => {
       try {
         const newMsgs = adapter.getNewMessages(mutations);
@@ -974,11 +981,19 @@
     const container = adapter.getContainer();
     console.log('[AI监控] 监控容器:', container ? container.tagName : 'null');
     if (container) {
-      observer.observe(container, { childList: true, subtree: true, characterData: true });
+      observer.observe(container, { childList: true, subtree: true });
       console.log('[AI监控] ✅ MutationObserver已启动');
     } else {
       console.error('[AI监控] ❌ 未找到监控容器');
     }
+
+    // 定时重扫：捕获流式输出的最终状态（每5秒扫一次，防抖会合并）
+    setInterval(() => {
+      try {
+        const allMsgs = adapter.getMessages();
+        allMsgs.forEach(msg => processMessage(msg));
+      } catch (e) { /* 静默 */ }
+    }, 5000);
   }
 
   function processMessage(el) {
@@ -988,17 +1003,46 @@
     if (isInSidebar(el)) return;
 
     const id = adapter.getMessageId(el);
-    if (!id || processedMessages.has(id)) return;
-    processedMessages.add(id);
+    if (!id) return;
 
     const data = adapter.extractMessage(el);
     if (!data || !data.content || data.content.length < 2) return;
 
-    // 内容级去重：防止同一段文本被反复记录
+    // 防抖：同一个元素的内容可能在流式输出中不断增长
+    // 每次检测到变化就重置计时器，直到内容稳定2秒后才真正发送
+    if (pendingMessages.has(id)) {
+      clearTimeout(pendingMessages.get(id).timer);
+    }
+
+    const timer = setTimeout(() => {
+      pendingMessages.delete(id);
+      sendFinalMessage(el, id);
+    }, DEBOUNCE_MS);
+
+    pendingMessages.set(id, { timer, el, lastContent: data.content });
+  }
+
+  /** 防抖结束后：提取最终内容并发送 */
+  function sendFinalMessage(el, id) {
+    const data = adapter.extractMessage(el);
+    if (!data || !data.content || data.content.length < 2) return;
+
+    // 内容级去重 + 前缀检测
     const contentKey = normalizeForDedup(data.content);
+
+    // 检查是否已有完全相同的内容
     if (contentHashes.has(contentKey)) {
-      console.log('[AI监控] 跳过重复内容:', data.content.substring(0, 40));
       return;
+    }
+
+    // 检查是否已有的某条内容是当前内容的前缀（流式残留）
+    // 移除旧的短版本 hash
+    for (const existingKey of contentHashes) {
+      if (contentKey.startsWith(existingKey) || existingKey.startsWith(contentKey)) {
+        // 新内容是旧内容的超集 或 子集，去掉旧的
+        contentHashes.delete(existingKey);
+        break;
+      }
     }
     contentHashes.add(contentKey);
 
@@ -1006,9 +1050,9 @@
     data.platform = platform;
     data.timestamp = new Date().toISOString();
     data.url = window.location.href;
-    data.wordCount = data.content.length; // 中文按字符数
+    data.wordCount = data.content.length;
 
-    console.log('[AI监控] 保存消息:', data.role, data.content.substring(0, 60));
+    console.log('[AI监控] 保存消息:', data.role, `(${data.content.length}字)`, data.content.substring(0, 60));
 
     try {
       chrome.runtime.sendMessage({
