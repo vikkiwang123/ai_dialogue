@@ -101,40 +101,17 @@
       </div>
     </section>
 
-    <!-- ====== 对话（消息 + 搜索 + 导出） ====== -->
+    <!-- ====== 对话 ====== -->
     <section class="tab-panel" id="tab-dialogue">
-      <!-- 搜索栏（始终可见） -->
-      <div class="search-toolbar">
-        <div class="search-bar">
+      <!-- 统一筛选栏 -->
+      <div class="filter-bar">
+        <div class="filter-row-search">
           <span class="search-icon">🔍</span>
-          <input type="text" id="searchInput" class="search-input" placeholder="搜索所有对话记录...">
-          <button class="search-clear" id="searchClear" title="清除">✕</button>
+          <input type="text" id="searchInput" class="search-input" placeholder="搜索对话...">
+          <button class="search-clear" id="searchClear" title="清除" style="display:none;">✕</button>
         </div>
-        <div class="search-filters">
-          <select id="searchPlatform" class="filter-select filter-sm">
-            <option value="all">全部平台</option>
-            <option value="chatgpt">ChatGPT</option>
-            <option value="claude">Claude</option>
-            <option value="copilot">Copilot</option>
-            <option value="gemini">Gemini</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="perplexity">Perplexity</option>
-          </select>
-          <select id="searchRole" class="filter-select filter-sm">
-            <option value="all">全部角色</option>
-            <option value="user">我的消息</option>
-            <option value="assistant">AI回复</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- 搜索结果区（有搜索时显示） -->
-      <div class="search-results" id="searchResults" style="display:none;"></div>
-
-      <!-- 日期消息列表（无搜索时显示） -->
-      <div id="messagesSection">
-        <div class="messages-toolbar">
-          <input type="date" id="dateSelector" class="date-input">
+        <div class="filter-row-controls">
+          <input type="date" id="dateSelector" class="date-input filter-date">
           <select id="platformFilter" class="filter-select filter-sm">
             <option value="all">全部平台</option>
             <option value="chatgpt">ChatGPT</option>
@@ -145,20 +122,22 @@
             <option value="perplexity">Perplexity</option>
           </select>
           <select id="roleFilter" class="filter-select filter-sm">
-            <option value="all">全部角色</option>
-            <option value="user">我的消息</option>
-            <option value="assistant">AI回复</option>
+            <option value="all">全部</option>
+            <option value="user">我</option>
+            <option value="assistant">AI</option>
           </select>
-          <button class="icon-btn add-btn" id="manualAddBtn" title="手动添加对话">➕</button>
-          <button class="icon-btn select-btn" id="selectModeBtn" title="选取消息引用到其他大模型">✂️</button>
+          <button class="icon-btn add-btn" id="manualAddBtn" title="手动添加">➕</button>
+          <button class="icon-btn select-btn" id="selectModeBtn" title="选取上下文">✂️</button>
         </div>
-        <div class="messages-list" id="messagesList">
-          <div class="empty-hint">选择日期查看消息</div>
-        </div>
+      </div>
+
+      <!-- 聚合消息列表（对话卡片） -->
+      <div class="conversations-list" id="conversationsList">
+        <div class="empty-hint">选择日期查看对话</div>
       </div>
     </section>
 
-    <!-- 选取模式浮动操作栏（固定在底部） -->
+    <!-- 选取模式浮动操作栏 -->
     <div class="select-bar" id="selectBar" style="display:none;">
       <div class="select-bar-top">
         <div class="select-stats" id="selectStats">已选 0 条</div>
@@ -180,7 +159,6 @@
         <button class="btn btn-outline btn-sm" id="selectDownloadBtn">📥</button>
       </div>
     </div>
-    </section>
 
     <!-- ====== 洞察（总结 + 图谱 + 导出 合并） ====== -->
     <section class="tab-panel" id="tab-insights">
@@ -314,3 +292,4 @@
   <script src="sidepanel.js"></script>
 </body>
 </html>
+

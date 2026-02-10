@@ -305,111 +305,302 @@ function loadRecentMessages() {
 // ============================================
 // 消息列表（消息页）
 // ============================================
-let selectMode = false;       // 是否处于选取模式
-let currentMessages = [];     // 当前页消息（filtered）
+// ============================================
+// 对话视图：聚类 + 统一筛选 + 选取
+// ============================================
+let selectMode = false;
+let currentMessages = [];   // 当前过滤后的所有消息（flat）
+let searchKeywords = [];    // 当前搜索关键词
 
-function loadMessages() {
-  const date = document.getElementById('dateSelector').value;
-  const roleFilter = document.getElementById('roleFilter').value;
-  const platformFilter = document.getElementById('platformFilter')?.value || 'all';
+const CLUSTER_GAP_MS = 10 * 60 * 1000; // 10分钟间隔分割对话
 
-  chrome.runtime.sendMessage({ type: 'GET_MESSAGES', date }, (response) => {
-    if (chrome.runtime.lastError) return;
-    const container = document.getElementById('messagesList');
+/**
+ * 把扁平消息列表聚类为对话（同平台 + 时间间隔 < 10min）
+ */
+function clusterMessages(messages) {
+  if (!messages || messages.length === 0) return [];
 
-    if (!response || !response.success || !response.messages || response.messages.length === 0) {
-      container.innerHTML = '<div class="empty-hint">该日期没有对话记录</div>';
-      currentMessages = [];
-      updateSelectStats();
-      return;
+  // 按时间排序
+  const sorted = [...messages].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const conversations = [];
+  let current = null;
+
+  sorted.forEach(msg => {
+    const ts = new Date(msg.timestamp).getTime();
+    const sameCluster = current
+      && current.platform === msg.platform
+      && (ts - current.endTs) < CLUSTER_GAP_MS;
+
+    if (sameCluster) {
+      current.messages.push(msg);
+      current.endTs = ts;
+      current.endTime = msg.timestamp;
+      current.wordCount += (msg.content || '').length;
+    } else {
+      // 新对话
+      current = {
+        platform: msg.platform,
+        messages: [msg],
+        startTime: msg.timestamp,
+        endTime: msg.timestamp,
+        startTs: ts,
+        endTs: ts,
+        wordCount: (msg.content || '').length,
+      };
+      conversations.push(current);
     }
-
-    let messages = response.messages;
-    if (roleFilter !== 'all') {
-      messages = messages.filter(m => m.role === roleFilter);
-    }
-    if (platformFilter !== 'all') {
-      messages = messages.filter(m => m.platform === platformFilter);
-    }
-
-    currentMessages = messages;
-
-    if (messages.length === 0) {
-      container.innerHTML = '<div class="empty-hint">没有符合条件的消息</div>';
-      return;
-    }
-
-    container.innerHTML = messages.map((msg, idx) => `
-      <div class="message-card ${msg.role} ${selectMode ? 'selectable' : ''}" data-idx="${idx}">
-        ${selectMode ? `<label class="msg-select-check"><input type="checkbox" class="msg-select-cb" data-idx="${idx}" checked></label>` : ''}
-        <div class="msg-card-body">
-          <div class="card-header">
-            <span class="role-tag">${msg.role === 'user' ? '👤 我' : '🤖 AI'}</span>
-            <span class="platform-tag">${getPlatformName(msg.platform)}${msg.source === 'manual' ? ' (手动)' : ''}</span>
-          </div>
-          <div class="card-content md-body">${renderMarkdown(msg.content || '')}</div>
-          <div class="card-footer">${formatTime(msg.timestamp)}</div>
-        </div>
-      </div>
-    `).join('');
-
-    // 选取模式下绑定 checkbox 事件
-    if (selectMode) {
-      container.querySelectorAll('.msg-select-cb').forEach(cb => {
-        cb.addEventListener('change', updateSelectStats);
-      });
-      // 也允许点击卡片区域 toggle
-      container.querySelectorAll('.message-card.selectable').forEach(card => {
-        card.addEventListener('click', (e) => {
-          if (e.target.closest('.msg-select-check') || e.target.closest('a') || e.target.closest('button')) return;
-          const cb = card.querySelector('.msg-select-cb');
-          if (cb) { cb.checked = !cb.checked; updateSelectStats(); }
-        });
-      });
-      updateSelectStats();
-    }
-
-    renderMermaidBlocks(container);
   });
+
+  // 生成标题：取第一条 user 消息，或第一条消息
+  conversations.forEach(conv => {
+    const firstUser = conv.messages.find(m => m.role === 'user');
+    const titleSource = firstUser || conv.messages[0];
+    const raw = (titleSource.content || '').replace(/\n/g, ' ').trim();
+    conv.title = raw.length > 60 ? raw.substring(0, 60) + '...' : raw;
+    conv.messageCount = conv.messages.length;
+  });
+
+  return conversations;
+}
+
+/**
+ * 主加载函数：获取消息 → 过滤 → 聚类 → 渲染
+ * 有搜索词时走跨日期搜索，无搜索词时走单日期
+ */
+function loadMessages() {
+  const query = (document.getElementById('searchInput').value || '').trim();
+  const platformFilter = document.getElementById('platformFilter').value;
+  const roleFilter = document.getElementById('roleFilter').value;
+  const date = document.getElementById('dateSelector').value;
+  const container = document.getElementById('conversationsList');
+
+  searchKeywords = query.length >= 2 ? query.toLowerCase().split(/\s+/) : [];
+
+  if (query.length >= 2) {
+    // 搜索模式：跨日期搜索
+    container.innerHTML = '<div class="loading-ai"><div class="loading-spinner"></div><p>搜索中...</p></div>';
+    chrome.runtime.sendMessage({
+      type: 'SEARCH_MESSAGES',
+      query,
+      options: { platform: platformFilter, role: roleFilter, maxResults: 100 }
+    }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.success) {
+        container.innerHTML = '<div class="empty-hint">搜索失败</div>';
+        return;
+      }
+      const results = response.results || [];
+      currentMessages = results;
+      if (results.length === 0) {
+        container.innerHTML = '<div class="empty-hint"><div class="empty-icon">😕</div><p>没有找到匹配结果</p></div>';
+        return;
+      }
+      // 按日期分组 → 每组内聚类
+      const byDate = {};
+      results.forEach(msg => {
+        const d = msg.date || '未知';
+        if (!byDate[d]) byDate[d] = [];
+        byDate[d].push(msg);
+      });
+      renderGroupedConversations(byDate, container);
+    });
+  } else {
+    // 日期模式：单日加载
+    chrome.runtime.sendMessage({ type: 'GET_MESSAGES', date }, (response) => {
+      if (chrome.runtime.lastError) return;
+      if (!response || !response.success || !response.messages || response.messages.length === 0) {
+        container.innerHTML = '<div class="empty-hint">该日期没有对话记录</div>';
+        currentMessages = [];
+        if (selectMode) updateSelectStats();
+        return;
+      }
+      let messages = response.messages;
+      if (platformFilter !== 'all') messages = messages.filter(m => m.platform === platformFilter);
+      if (roleFilter !== 'all') messages = messages.filter(m => m.role === roleFilter);
+      currentMessages = messages;
+
+      if (messages.length === 0) {
+        container.innerHTML = '<div class="empty-hint">没有符合筛选条件的消息</div>';
+        return;
+      }
+      renderGroupedConversations({ [date]: messages }, container);
+    });
+  }
+}
+
+/**
+ * 渲染按日期分组的聚类对话
+ */
+function renderGroupedConversations(byDate, container) {
+  let html = '';
+  let globalMsgIdx = 0; // 全局消息索引（用于选取）
+
+  // 按日期降序
+  const sortedDates = Object.keys(byDate).sort().reverse();
+
+  for (const date of sortedDates) {
+    const dayMsgs = byDate[date];
+    const conversations = clusterMessages(dayMsgs);
+    const totalMsgs = dayMsgs.length;
+
+    html += `<div class="date-group">`;
+    html += `<div class="date-group-header">📅 ${date} · ${conversations.length}个对话 · ${totalMsgs}条</div>`;
+
+    conversations.forEach((conv, cIdx) => {
+      const convId = `conv-${date}-${cIdx}`;
+      const platformIcon = getPlatformIcon(conv.platform);
+      const timeRange = formatTime(conv.startTime) + (conv.startTime !== conv.endTime ? ' → ' + formatTime(conv.endTime) : '');
+
+      html += `<div class="conv-card" data-conv-id="${convId}">`;
+
+      // 对话头部（可折叠）
+      html += `<div class="conv-header" data-toggle="${convId}">`;
+      if (selectMode) {
+        html += `<label class="conv-select-check" onclick="event.stopPropagation()">
+          <input type="checkbox" class="conv-select-cb" data-conv-id="${convId}">
+        </label>`;
+      }
+      html += `
+        <span class="conv-platform-icon">${platformIcon}</span>
+        <div class="conv-info">
+          <div class="conv-title">${searchKeywords.length > 0 ? highlightKeywords(escapeHtml(conv.title), searchKeywords) : escapeHtml(conv.title)}</div>
+          <div class="conv-meta">
+            <span class="conv-platform-name">${getPlatformName(conv.platform)}</span>
+            <span class="conv-time">${timeRange}</span>
+            <span class="conv-count">${conv.messageCount}条 · ${formatNumber(conv.wordCount)}字</span>
+          </div>
+        </div>
+        <span class="conv-toggle-icon">▶</span>
+      </div>`;
+
+      // 对话消息体（默认折叠）
+      html += `<div class="conv-body" id="${convId}" style="display:none;">`;
+      conv.messages.forEach(msg => {
+        const roleIcon = msg.role === 'user' ? '👤' : '🤖';
+        const contentHtml = searchKeywords.length > 0
+          ? highlightKeywords(escapeHtml((msg.content || '').substring(0, 300)), searchKeywords)
+          : renderMarkdown(msg.content || '');
+        const isSearchMode = searchKeywords.length > 0;
+
+        html += `<div class="conv-msg ${msg.role}" data-global-idx="${globalMsgIdx}">`;
+        if (selectMode) {
+          html += `<label class="msg-select-check" onclick="event.stopPropagation()">
+            <input type="checkbox" class="msg-select-cb" data-global-idx="${globalMsgIdx}">
+          </label>`;
+        }
+        html += `
+          <div class="conv-msg-body">
+            <div class="conv-msg-header">
+              <span class="conv-msg-role">${roleIcon} ${msg.role === 'user' ? '我' : 'AI'}</span>
+              <span class="conv-msg-time">${formatTime(msg.timestamp)}</span>
+            </div>
+            <div class="conv-msg-content ${isSearchMode ? '' : 'md-body'}">${contentHtml}${!isSearchMode && (msg.content || '').length > 300 ? '' : ''}</div>
+          </div>
+        </div>`;
+        globalMsgIdx++;
+      });
+      html += `</div>`; // conv-body
+      html += `</div>`; // conv-card
+    });
+
+    html += `</div>`; // date-group
+  }
+
+  // 搜索模式下显示总结
+  if (searchKeywords.length > 0) {
+    const totalResults = Object.values(byDate).reduce((s, m) => s + m.length, 0);
+    html = `<div class="search-summary">找到 ${totalResults} 条结果</div>` + html;
+  }
+
+  container.innerHTML = html;
+
+  // 绑定折叠/展开
+  container.querySelectorAll('.conv-header[data-toggle]').forEach(header => {
+    header.addEventListener('click', () => {
+      const id = header.dataset.toggle;
+      const body = document.getElementById(id);
+      const icon = header.querySelector('.conv-toggle-icon');
+      if (body.style.display === 'none') {
+        body.style.display = 'block';
+        icon.textContent = '▼';
+        header.closest('.conv-card').classList.add('expanded');
+        // 渲染 mermaid（如果非搜索模式）
+        if (searchKeywords.length === 0) renderMermaidBlocks(body);
+      } else {
+        body.style.display = 'none';
+        icon.textContent = '▶';
+        header.closest('.conv-card').classList.remove('expanded');
+      }
+    });
+  });
+
+  // 选取模式事件绑定
+  if (selectMode) {
+    // 对话级 checkbox → 联动消息级
+    container.querySelectorAll('.conv-select-cb').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const convId = cb.dataset.convId;
+        const body = document.getElementById(convId);
+        if (body) {
+          body.querySelectorAll('.msg-select-cb').forEach(mcb => { mcb.checked = cb.checked; });
+        }
+        updateSelectStats();
+      });
+    });
+    // 消息级
+    container.querySelectorAll('.msg-select-cb').forEach(cb => {
+      cb.addEventListener('change', updateSelectStats);
+    });
+    updateSelectStats();
+  }
+}
+
+function getPlatformIcon(platform) {
+  const icons = {
+    chatgpt: '🟢', claude: '🟠', copilot: '🔵',
+    gemini: '🟣', deepseek: '🔷', perplexity: '🟡'
+  };
+  return icons[platform] || '⚪';
 }
 
 // ============================================
-// 选取模式（内联上下文导出）
+// 选取模式
 // ============================================
 function toggleSelectMode(on) {
   selectMode = on !== undefined ? on : !selectMode;
   const bar = document.getElementById('selectBar');
   const btn = document.getElementById('selectModeBtn');
+  const list = document.getElementById('conversationsList');
 
   if (selectMode) {
     bar.style.display = 'block';
     btn.classList.add('active');
     btn.title = '退出选取模式';
+    list.classList.add('has-select-bar');
   } else {
     bar.style.display = 'none';
     btn.classList.remove('active');
-    btn.title = '选取消息引用到其他大模型';
+    btn.title = '选取上下文';
+    list.classList.remove('has-select-bar');
   }
-  // 重新渲染消息（加/去checkbox）
   loadMessages();
 }
 
 function updateSelectStats() {
-  const checkboxes = document.querySelectorAll('.msg-select-cb');
-  const selected = document.querySelectorAll('.msg-select-cb:checked');
-  const totalChars = Array.from(selected).reduce((sum, cb) => {
-    const idx = parseInt(cb.dataset.idx);
+  const total = document.querySelectorAll('.msg-select-cb');
+  const checked = document.querySelectorAll('.msg-select-cb:checked');
+  const totalChars = Array.from(checked).reduce((sum, cb) => {
+    const idx = parseInt(cb.dataset.globalIdx);
     return sum + (currentMessages[idx]?.content || '').length;
   }, 0);
   const tokens = Math.round(totalChars * 0.6);
-  const statsEl = document.getElementById('selectStats');
-  statsEl.innerHTML = `已选 <strong>${selected.length}</strong>/${checkboxes.length} 条 · ≈${formatNumber(totalChars)}字 · ≈${formatNumber(tokens)}t`;
+  document.getElementById('selectStats').innerHTML =
+    `已选 <strong>${checked.length}</strong>/${total.length} 条 · ≈${formatNumber(totalChars)}字 · ≈${formatNumber(tokens)}t`;
 }
 
 function getSelectedMsgsFromList() {
   const selected = [];
   document.querySelectorAll('.msg-select-cb:checked').forEach(cb => {
-    const idx = parseInt(cb.dataset.idx);
+    const idx = parseInt(cb.dataset.globalIdx);
     if (currentMessages[idx]) selected.push(currentMessages[idx]);
   });
   return selected;
@@ -425,10 +616,20 @@ function buildSelectExportText() {
 
   if (format === 'conversation') {
     if (addGuide) text += '以下是我之前与AI的对话记录，请基于这些上下文继续：\n\n';
-    selected.forEach(msg => {
-      const role = msg.role === 'user' ? '用户' : 'AI';
-      text += `${role}: ${msg.content}\n\n`;
-    });
+    // 按平台分组（如有多平台）
+    const platforms = [...new Set(selected.map(m => m.platform))];
+    if (platforms.length > 1) {
+      platforms.forEach(p => {
+        text += `--- ${getPlatformName(p)} ---\n\n`;
+        selected.filter(m => m.platform === p).forEach(msg => {
+          text += `${msg.role === 'user' ? '用户' : 'AI'}: ${msg.content}\n\n`;
+        });
+      });
+    } else {
+      selected.forEach(msg => {
+        text += `${msg.role === 'user' ? '用户' : 'AI'}: ${msg.content}\n\n`;
+      });
+    }
     if (addGuide) text += '---\n请基于以上对话继续回答我的问题。\n';
   } else if (format === 'markdown') {
     if (addGuide) text += '> 以下是我之前与AI的对话记录\n\n';
@@ -442,7 +643,6 @@ function buildSelectExportText() {
       text += `${msg.role === 'user' ? 'Q' : 'A'}: ${msg.content}\n\n`;
     });
   }
-
   return text.trim();
 }
 
@@ -460,8 +660,7 @@ function copySelectedContext() {
 function downloadSelectedContext() {
   const text = buildSelectExportText();
   if (!text) { showToast('⚠️ 没有选中任何消息'); return; }
-  const format = document.getElementById('selectFormat').value;
-  const ext = format === 'markdown' ? 'md' : 'txt';
+  const ext = document.getElementById('selectFormat').value === 'markdown' ? 'md' : 'txt';
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -474,132 +673,38 @@ function downloadSelectedContext() {
 
 function selectAllMessages(all) {
   document.querySelectorAll('.msg-select-cb').forEach(cb => { cb.checked = all; });
+  // 同步对话级 checkbox
+  document.querySelectorAll('.conv-select-cb').forEach(cb => { cb.checked = all; });
   updateSelectStats();
 }
 
 // ============================================
-// 全文搜索
+// 统一搜索（搜索作为筛选条件，不切换视图）
 // ============================================
 let searchTimer = null;
 
 function initSearch() {
   const input = document.getElementById('searchInput');
   const clearBtn = document.getElementById('searchClear');
-  const searchResults = document.getElementById('searchResults');
-  const messagesSection = document.getElementById('messagesSection');
-
-  function showSearchMode(on) {
-    searchResults.style.display = on ? 'block' : 'none';
-    messagesSection.style.display = on ? 'none' : 'block';
-  }
 
   input.addEventListener('input', () => {
     clearTimeout(searchTimer);
     clearBtn.style.display = input.value ? 'flex' : 'none';
-
-    if (input.value.trim().length >= 2) {
-      showSearchMode(true);
-      searchTimer = setTimeout(() => performSearch(), 300);
-    } else if (input.value.trim().length === 0) {
-      showSearchMode(false);
-    }
+    searchTimer = setTimeout(() => loadMessages(), 350);
   });
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && input.value.trim().length >= 2) {
+    if (e.key === 'Enter') {
       clearTimeout(searchTimer);
-      showSearchMode(true);
-      performSearch();
+      loadMessages();
     }
   });
 
   clearBtn.addEventListener('click', () => {
     input.value = '';
     clearBtn.style.display = 'none';
-    showSearchMode(false);
+    loadMessages();
     input.focus();
-  });
-
-  document.getElementById('searchPlatform').addEventListener('change', () => {
-    if (input.value.trim().length >= 2) performSearch();
-  });
-  document.getElementById('searchRole').addEventListener('change', () => {
-    if (input.value.trim().length >= 2) performSearch();
-  });
-}
-
-function performSearch() {
-  const query = document.getElementById('searchInput').value.trim();
-  if (query.length < 2) return;
-
-  const platform = document.getElementById('searchPlatform').value;
-  const role = document.getElementById('searchRole').value;
-  const resultsContainer = document.getElementById('searchResults');
-
-  resultsContainer.innerHTML = `
-    <div class="loading-ai">
-      <div class="loading-spinner"></div>
-      <p>搜索中...</p>
-    </div>
-  `;
-
-  chrome.runtime.sendMessage({
-    type: 'SEARCH_MESSAGES',
-    query,
-    options: { platform, role, maxResults: 50 }
-  }, (response) => {
-    if (chrome.runtime.lastError) {
-      resultsContainer.innerHTML = '<div class="error-state"><p>❌ 搜索失败</p></div>';
-      return;
-    }
-
-    if (!response || !response.success || !response.results || response.results.length === 0) {
-      resultsContainer.innerHTML = `
-        <div class="empty-hint">
-          <div class="empty-icon">😕</div>
-          <p>没有找到匹配的结果</p>
-          <p class="empty-sub">试试其他关键词</p>
-        </div>
-      `;
-      return;
-    }
-
-    const results = response.results;
-    const keywords = query.toLowerCase().split(/\s+/);
-
-    // 按日期分组
-    const grouped = {};
-    results.forEach(r => {
-      const date = r.date || '未知日期';
-      if (!grouped[date]) grouped[date] = [];
-      grouped[date].push(r);
-    });
-
-    let html = `<div class="search-summary">找到 ${results.length} 条结果</div>`;
-
-    for (const [date, msgs] of Object.entries(grouped)) {
-      html += `<div class="search-date-group">`;
-      html += `<div class="search-date-header">📅 ${date} (${msgs.length} 条)</div>`;
-
-      msgs.forEach(msg => {
-        const highlightedExcerpt = highlightKeywords(escapeHtml(msg.excerpt || msg.content.substring(0, 200)), keywords);
-
-        html += `
-          <div class="search-result-card ${msg.role}">
-            <div class="card-header">
-              <span class="role-tag">${msg.role === 'user' ? '👤 我' : '🤖 AI'}</span>
-              <span class="platform-tag">${getPlatformName(msg.platform)}</span>
-              <span class="result-time">${formatTime(msg.timestamp)}</span>
-            </div>
-            <div class="card-content search-excerpt">${highlightedExcerpt}</div>
-          </div>
-        `;
-      });
-
-      html += `</div>`;
-    }
-
-    resultsContainer.innerHTML = html;
   });
 }
 
@@ -1025,22 +1130,19 @@ function showToast(message, duration = 2500) {
 }
 
 // ============================================
-// 上下文导出（已整合到消息列表的选取模式）
+// 选取模式事件绑定
 // ============================================
-
 function initExport() {
-  // 选取模式按钮
   document.getElementById('selectModeBtn').addEventListener('click', () => toggleSelectMode());
   document.getElementById('selectCancelBtn').addEventListener('click', () => toggleSelectMode(false));
   document.getElementById('selectCopyBtn').addEventListener('click', copySelectedContext);
   document.getElementById('selectDownloadBtn').addEventListener('click', downloadSelectedContext);
   document.getElementById('selectAllBtn').addEventListener('click', () => {
-    const allChecked = document.querySelectorAll('.msg-select-cb:checked').length === document.querySelectorAll('.msg-select-cb').length;
-    selectAllMessages(!allChecked);
+    const all = document.querySelectorAll('.msg-select-cb');
+    const checked = document.querySelectorAll('.msg-select-cb:checked');
+    selectAllMessages(checked.length < all.length);
   });
 }
-
-// (旧导出函数已移除 - 功能整合到消息列表的选取模式)
 
 function formatDateTime(timestamp) {
   if (!timestamp) return '';
@@ -1380,7 +1482,12 @@ function setupEventListeners() {
     chrome.runtime.openOptionsPage();
   });
 
-  document.getElementById('dateSelector').addEventListener('change', loadMessages);
+  document.getElementById('dateSelector').addEventListener('change', () => {
+    // 切换日期时清空搜索
+    document.getElementById('searchInput').value = '';
+    document.getElementById('searchClear').style.display = 'none';
+    loadMessages();
+  });
   document.getElementById('roleFilter').addEventListener('change', loadMessages);
   document.getElementById('platformFilter').addEventListener('change', loadMessages);
 
