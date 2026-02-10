@@ -385,6 +385,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // 知识图谱：提取每日主题
+  if (request.type === 'EXTRACT_TOPICS') {
+    extractTopics(request.options)
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // 知识图谱：生成时间线 Mermaid
+  if (request.type === 'GENERATE_TIMELINE') {
+    generateTimeline(request.topics)
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // 知识图谱：生成知识图谱 Mermaid
+  if (request.type === 'GENERATE_KNOWLEDGE_GRAPH') {
+    generateKnowledgeGraph(request.topics, request.direction)
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   // 获取平台健康状态
   if (request.type === 'GET_PLATFORM_STATUS') {
     getPlatformStatus()
@@ -701,6 +725,265 @@ async function getContextMessages(options = {}) {
       });
     });
   });
+}
+
+// ============================================
+// 知识图谱：主题提取 + 图谱生成
+// ============================================
+
+/**
+ * 提取日期范围内每天的学习主题（LLM 提取 + 缓存）
+ */
+async function extractTopics(options = {}) {
+  const { dateFrom, dateTo, force = false } = options;
+  if (!dateFrom || !dateTo) throw new Error('请选择日期范围');
+
+  // 1. 获取日期列表
+  const dates = [];
+  let cur = new Date(dateFrom);
+  const end = new Date(dateTo);
+  while (cur <= end) {
+    dates.push(cur.toISOString().split('T')[0]);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  // 2. 获取 LLM 配置
+  await loadLLMConfigFromStorage();
+  const apiKey = LLM_CONFIG.apiKey;
+  if (!apiKey) throw new Error('请先在设置中配置 API Key');
+
+  const allTopics = [];
+
+  for (const date of dates) {
+    // 检查缓存
+    const cacheKey = `topics_${date}`;
+    const cached = await new Promise(r => chrome.storage.local.get([cacheKey], res => r(res[cacheKey])));
+
+    if (cached && !force) {
+      allTopics.push({ date, ...cached });
+      continue;
+    }
+
+    // 获取当天消息
+    const messages = await getMessages(date);
+    if (messages.length === 0) {
+      allTopics.push({ date, topics: [], messageCount: 0 });
+      continue;
+    }
+
+    // 构建 prompt
+    const conversationText = messages
+      .slice(0, 100) // 限制条数
+      .map(m => `${m.role === 'user' ? '用户' : 'AI'}(${m.platform || ''}): ${(m.content || '').substring(0, 500)}`)
+      .join('\n');
+
+    const prompt = `分析以下 AI 对话记录，提取今天的学习主题。请以 JSON 格式返回，不要有其他任何文字。
+
+JSON 格式要求：
+{
+  "topics": [
+    {
+      "name": "主题名称（简短中文）",
+      "tags": ["标签1", "标签2"],
+      "platforms": ["chatgpt"],
+      "msgCount": 5,
+      "depth": 2,
+      "summary": "一句话总结"
+    }
+  ]
+}
+
+depth 含义：1=浅尝辄止 2=有一定深度 3=深入探讨
+
+对话记录（${date}）：
+${conversationText}`;
+
+    try {
+      const provider = getCurrentProvider();
+      const model = getCurrentModel();
+      const apiUrl = LLM_CONFIG.providers[LLM_CONFIG.provider]?.apiUrl || provider.apiUrl;
+
+      const resp = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: '你是一个学习分析助手。只返回JSON，不要有任何额外文字、代码块标记或解释。' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 1500
+        })
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error('[AI监控] 主题提取API错误:', resp.status, errText);
+        allTopics.push({ date, topics: [], messageCount: messages.length, error: `API ${resp.status}` });
+        continue;
+      }
+
+      const data = await resp.json();
+      let content = data.choices?.[0]?.message?.content || '';
+
+      // 清理可能的 markdown 代码块包裹
+      content = content.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (e) {
+        console.warn('[AI监控] 主题JSON解析失败:', content.substring(0, 200));
+        allTopics.push({ date, topics: [], messageCount: messages.length, error: 'JSON解析失败' });
+        continue;
+      }
+
+      const result = {
+        topics: parsed.topics || [],
+        messageCount: messages.length,
+        generatedAt: new Date().toISOString()
+      };
+
+      // 缓存
+      chrome.storage.local.set({ [cacheKey]: result });
+      allTopics.push({ date, ...result });
+
+    } catch (e) {
+      console.error('[AI监控] 主题提取失败:', date, e);
+      allTopics.push({ date, topics: [], messageCount: messages.length, error: e.message });
+    }
+  }
+
+  return allTopics;
+}
+
+/**
+ * 生成学习时间线 Mermaid 代码
+ */
+async function generateTimeline(allTopics) {
+  if (!allTopics || allTopics.length === 0) throw new Error('没有主题数据');
+
+  // 按周分组
+  const weeks = {};
+  allTopics.forEach(day => {
+    if (!day.topics || day.topics.length === 0) return;
+    const d = new Date(day.date);
+    const weekStart = new Date(d);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); // 周一
+    const weekKey = weekStart.toISOString().split('T')[0];
+    if (!weeks[weekKey]) weeks[weekKey] = [];
+    weeks[weekKey].push(day);
+  });
+
+  let mermaid = 'timeline\n    title 我的AI学习之旅\n';
+
+  let weekIdx = 0;
+  for (const [weekStart, days] of Object.entries(weeks).sort()) {
+    weekIdx++;
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const label = `第${weekIdx}周 (${formatShortDate(weekStart)}~${formatShortDate(weekEnd.toISOString().split('T')[0])})`;
+    mermaid += `    section ${label}\n`;
+
+    days.sort((a, b) => a.date.localeCompare(b.date));
+    for (const day of days) {
+      const dateLabel = formatShortDate(day.date);
+      const topicNames = day.topics.map(t => t.name).slice(0, 3);
+      mermaid += `        ${dateLabel} : ${topicNames.join(' : ')}\n`;
+    }
+  }
+
+  return { mermaidCode: mermaid.trim() };
+}
+
+/**
+ * 生成知识图谱 Mermaid 代码（LLM 生成）
+ */
+async function generateKnowledgeGraph(allTopics, direction = 'TD') {
+  if (!allTopics || allTopics.length === 0) throw new Error('没有主题数据');
+
+  await loadLLMConfigFromStorage();
+  const apiKey = LLM_CONFIG.apiKey;
+  if (!apiKey) throw new Error('请先配置 API Key');
+
+  // 把所有主题汇总成文本
+  let topicSummary = '';
+  allTopics.forEach(day => {
+    if (!day.topics || day.topics.length === 0) return;
+    topicSummary += `\n[${day.date}]\n`;
+    day.topics.forEach(t => {
+      topicSummary += `- ${t.name} (标签: ${(t.tags || []).join(', ')}; 深度: ${'⭐'.repeat(t.depth || 1)})\n`;
+      if (t.summary) topicSummary += `  ${t.summary}\n`;
+    });
+  });
+
+  const prompt = `你是一个资深的知识图谱架构师。根据以下学习主题记录，生成 Mermaid 语法的知识图谱。
+
+严格规则：
+1. 仅输出以 "graph ${direction}" 开头的代码块内容，不要有任何其他文字
+2. 使用中文关键词
+3. 节点设计：核心主题用 [[主题]]，技术/方法用 (技术)，结论/成果用 >结论]
+4. 连线：关联 -->，属于/组成 -.->，导致/触发 ==>
+5. 控制在 10-20 个核心节点，确保视觉清晰
+6. 有相关性的不同天主题之间要建立连线
+7. 不要使用特殊字符如引号、括号等在节点文字中
+
+学习主题记录：
+${topicSummary}`;
+
+  const provider = getCurrentProvider();
+  const model = getCurrentModel();
+  const apiUrl = LLM_CONFIG.providers[LLM_CONFIG.provider]?.apiUrl || provider.apiUrl;
+
+  const resp = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: '你是一个知识图谱架构师。只输出 Mermaid 代码，不要有任何解释文字或代码块标记。' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.4,
+      max_tokens: 2000
+    })
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`API 错误 ${resp.status}: ${errText.substring(0, 200)}`);
+  }
+
+  const data = await resp.json();
+  let mermaidCode = data.choices?.[0]?.message?.content || '';
+
+  // 清理 markdown 代码块包裹
+  mermaidCode = mermaidCode.replace(/^```mermaid\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  // 确保以 graph 开头
+  if (!mermaidCode.startsWith('graph ')) {
+    // 尝试提取其中的 graph 部分
+    const match = mermaidCode.match(/graph\s+(TD|LR|TB|BT|RL)[\s\S]+/);
+    if (match) {
+      mermaidCode = match[0];
+    } else {
+      mermaidCode = `graph ${direction}\n    A[[暂无足够数据生成图谱]]`;
+    }
+  }
+
+  return { mermaidCode };
+}
+
+function formatShortDate(dateStr) {
+  const d = new Date(dateStr);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 // ============================================

@@ -1109,6 +1109,287 @@ function formatDateTime(timestamp) {
 }
 
 // ============================================
+// 知识图谱：主题 / 时间线 / 图谱
+// ============================================
+let graphTopicsData = null; // 缓存提取结果
+let graphZoomLevel = 1;
+
+function initGraph() {
+  // 子视图切换
+  document.querySelectorAll('.graph-sub-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.dataset.view;
+      document.querySelectorAll('.graph-sub-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.graph-view').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-' + view).classList.add('active');
+    });
+  });
+
+  // 范围选择
+  document.querySelectorAll('.scope-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.scope-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const scope = btn.dataset.scope;
+      document.getElementById('graphCustomRange').style.display = scope === 'custom' ? 'flex' : 'none';
+    });
+  });
+
+  // 生成按钮
+  document.getElementById('graphGenerateBtn').addEventListener('click', generateGraphAnalysis);
+
+  // 工具栏
+  document.getElementById('graphCopyMermaid').addEventListener('click', copyGraphMermaid);
+  document.getElementById('graphDownloadSvg').addEventListener('click', downloadGraphSvg);
+  document.getElementById('graphZoomIn').addEventListener('click', () => setGraphZoom(graphZoomLevel + 0.2));
+  document.getElementById('graphZoomOut').addEventListener('click', () => setGraphZoom(graphZoomLevel - 0.2));
+  document.getElementById('graphZoomReset').addEventListener('click', () => setGraphZoom(1));
+
+  // 默认日期
+  const today = new Date();
+  document.getElementById('graphDateTo').value = today.toISOString().split('T')[0];
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  document.getElementById('graphDateFrom').value = weekAgo.toISOString().split('T')[0];
+}
+
+function getGraphDateRange() {
+  const activeScope = document.querySelector('.scope-btn.active')?.dataset.scope || 'today';
+  const today = new Date();
+  let dateFrom, dateTo;
+
+  if (activeScope === 'today') {
+    dateFrom = dateTo = today.toISOString().split('T')[0];
+  } else if (activeScope === 'week') {
+    dateTo = today.toISOString().split('T')[0];
+    const d = new Date(today);
+    d.setDate(d.getDate() - 6);
+    dateFrom = d.toISOString().split('T')[0];
+  } else if (activeScope === 'month') {
+    dateTo = today.toISOString().split('T')[0];
+    const d = new Date(today);
+    d.setDate(d.getDate() - 29);
+    dateFrom = d.toISOString().split('T')[0];
+  } else {
+    dateFrom = document.getElementById('graphDateFrom').value;
+    dateTo = document.getElementById('graphDateTo').value;
+  }
+
+  return { dateFrom, dateTo };
+}
+
+async function generateGraphAnalysis() {
+  const { dateFrom, dateTo } = getGraphDateRange();
+  if (!dateFrom || !dateTo) {
+    showToast('⚠️ 请选择日期范围');
+    return;
+  }
+
+  const btn = document.getElementById('graphGenerateBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 分析中...';
+
+  // 第一步：提取主题
+  showGraphLoading('view-topics', '正在提取学习主题...');
+  showGraphLoading('view-timeline', '等待主题提取完成...');
+  showGraphLoading('view-knowledge', '等待主题提取完成...');
+
+  try {
+    const topicResp = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: 'EXTRACT_TOPICS',
+        options: { dateFrom, dateTo }
+      }, resp => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else if (!resp?.success) reject(new Error(resp?.error || '提取失败'));
+        else resolve(resp.data);
+      });
+    });
+
+    graphTopicsData = topicResp;
+    renderTopicsView(topicResp);
+
+    // 第二步：生成时间线
+    showGraphLoading('view-timeline', '正在生成时间线...');
+    try {
+      const timelineResp = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          type: 'GENERATE_TIMELINE',
+          topics: topicResp
+        }, resp => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else if (!resp?.success) reject(new Error(resp?.error || '生成失败'));
+          else resolve(resp.data);
+        });
+      });
+      await renderMermaidView('view-timeline', timelineResp.mermaidCode);
+    } catch (e) {
+      showGraphError('view-timeline', e.message);
+    }
+
+    // 第三步：生成知识图谱
+    showGraphLoading('view-knowledge', '正在生成知识图谱...');
+    try {
+      const direction = document.getElementById('graphDirection').value;
+      const graphResp = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          type: 'GENERATE_KNOWLEDGE_GRAPH',
+          topics: topicResp,
+          direction
+        }, resp => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else if (!resp?.success) reject(new Error(resp?.error || '生成失败'));
+          else resolve(resp.data);
+        });
+      });
+      await renderMermaidView('view-knowledge', graphResp.mermaidCode);
+    } catch (e) {
+      showGraphError('view-knowledge', e.message);
+    }
+
+    document.getElementById('graphToolbar').style.display = 'flex';
+
+  } catch (e) {
+    showGraphError('view-topics', e.message);
+    showGraphError('view-timeline', e.message);
+    showGraphError('view-knowledge', e.message);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '✨ 生成分析';
+}
+
+function renderTopicsView(allTopics) {
+  const container = document.getElementById('view-topics');
+
+  // 过滤掉没有主题的天
+  const daysWithTopics = allTopics.filter(d => d.topics && d.topics.length > 0);
+
+  if (daysWithTopics.length === 0) {
+    container.innerHTML = `<div class="graph-placeholder"><div class="empty-icon">😕</div><p>该范围内没有提取到学习主题</p><p class="empty-sub">可能对话量不够或没有明确的学习内容</p></div>`;
+    return;
+  }
+
+  let html = '';
+  daysWithTopics.sort((a, b) => b.date.localeCompare(a.date)); // 最新在前
+
+  daysWithTopics.forEach(day => {
+    const d = new Date(day.date);
+    const weekDay = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    const dateLabel = `${d.getMonth() + 1}月${d.getDate()}日 (周${weekDay})`;
+
+    html += `<div class="topic-day-card">`;
+    html += `<div class="topic-day-header"><span class="topic-date">📅 ${dateLabel}</span><span class="topic-day-count">${day.messageCount || 0} 条对话</span></div>`;
+
+    day.topics.forEach(topic => {
+      const depthStars = '⭐'.repeat(Math.min(topic.depth || 1, 3));
+      const platformBadges = (topic.platforms || []).map(p => `<span class="topic-platform">${getPlatformName(p)}</span>`).join('');
+      const tags = (topic.tags || []).map(t => `<span class="topic-tag">#${t}</span>`).join('');
+
+      html += `
+        <div class="topic-card depth-${topic.depth || 1}">
+          <div class="topic-header">
+            <span class="topic-name">${escapeHtml(topic.name)}</span>
+            <span class="topic-depth">${depthStars}</span>
+          </div>
+          <div class="topic-tags">${tags}</div>
+          ${topic.summary ? `<div class="topic-summary">${escapeHtml(topic.summary)}</div>` : ''}
+          <div class="topic-meta">
+            ${platformBadges}
+            <span class="topic-msg-count">${topic.msgCount || 0} 条</span>
+          </div>
+        </div>`;
+    });
+
+    html += `</div>`;
+  });
+
+  container.innerHTML = html;
+}
+
+async function renderMermaidView(viewId, mermaidCode) {
+  const container = document.getElementById(viewId);
+  if (!mermaidCode) {
+    container.innerHTML = `<div class="graph-placeholder"><div class="empty-icon">😕</div><p>没有足够数据生成可视化</p></div>`;
+    return;
+  }
+
+  // 存储 mermaid code 到 container 上
+  container.dataset.mermaidCode = mermaidCode;
+
+  const wrapperId = 'mermaid-render-' + viewId + '-' + Date.now();
+  container.innerHTML = `<div class="graph-mermaid-container" id="${wrapperId}-wrap"><div class="graph-mermaid-inner" id="${wrapperId}-inner"></div></div>`;
+
+  if (typeof mermaid !== 'undefined' && mermaidReady) {
+    try {
+      const { svg } = await mermaid.render(wrapperId, mermaidCode);
+      document.getElementById(wrapperId + '-inner').innerHTML = svg;
+    } catch (err) {
+      console.warn('[AI监控] Mermaid渲染失败:', err);
+      container.innerHTML = `<div class="graph-mermaid-container"><div class="mermaid-error-block"><p>⚠️ 图表渲染失败</p><pre class="mermaid-source">${escapeHtml(mermaidCode)}</pre></div></div>`;
+    }
+  } else {
+    container.innerHTML = `<div class="graph-mermaid-container"><pre class="mermaid-source">${escapeHtml(mermaidCode)}</pre></div>`;
+  }
+}
+
+function showGraphLoading(viewId, msg) {
+  document.getElementById(viewId).innerHTML = `<div class="graph-loading"><div class="loading-spinner"></div><p>${msg}</p></div>`;
+}
+
+function showGraphError(viewId, msg) {
+  document.getElementById(viewId).innerHTML = `<div class="graph-placeholder"><div class="empty-icon">❌</div><p>${escapeHtml(msg)}</p></div>`;
+}
+
+function setGraphZoom(level) {
+  graphZoomLevel = Math.max(0.3, Math.min(3, level));
+  document.querySelectorAll('.graph-mermaid-inner').forEach(el => {
+    el.style.transform = `scale(${graphZoomLevel})`;
+    el.style.transformOrigin = 'top center';
+  });
+}
+
+function copyGraphMermaid() {
+  // 找当前活跃的视图的 mermaid code
+  const activeView = document.querySelector('.graph-view.active');
+  const code = activeView?.dataset?.mermaidCode;
+  if (!code) {
+    showToast('⚠️ 当前视图没有 Mermaid 代码');
+    return;
+  }
+  navigator.clipboard.writeText(code).then(() => {
+    showToast('✅ Mermaid 代码已复制');
+  }).catch(() => {
+    showToast('❌ 复制失败');
+  });
+}
+
+function downloadGraphSvg() {
+  const activeView = document.querySelector('.graph-view.active');
+  const svg = activeView?.querySelector('svg');
+  if (!svg) {
+    showToast('⚠️ 当前视图没有可下载的图表');
+    return;
+  }
+
+  const serializer = new XMLSerializer();
+  let svgStr = serializer.serializeToString(svg);
+  // 添加 XML 声明和 encoding
+  if (!svgStr.startsWith('<?xml')) {
+    svgStr = '<?xml version="1.0" encoding="UTF-8"?>\n' + svgStr;
+  }
+  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `knowledge-graph-${new Date().toISOString().split('T')[0]}.svg`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('✅ SVG 已下载');
+}
+
+// ============================================
 // 状态检查
 // ============================================
 function checkStatus() {
@@ -1171,6 +1452,9 @@ function setupEventListeners() {
 
   // 上下文导出
   initExport();
+
+  // 知识图谱
+  initGraph();
 
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.enabled) checkStatus();

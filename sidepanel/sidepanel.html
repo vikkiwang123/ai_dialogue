@@ -32,7 +32,8 @@
     <button class="tab-btn" data-tab="messages">💬 消息</button>
     <button class="tab-btn" data-tab="search">🔍 搜索</button>
     <button class="tab-btn" data-tab="export">📦 导出</button>
-    <button class="tab-btn" data-tab="summary">🧠 总结</button>
+    <button class="tab-btn" data-tab="graph">🧠 图谱</button>
+    <button class="tab-btn" data-tab="summary">📝 总结</button>
   </nav>
 
   <!-- 标签页内容 -->
@@ -215,6 +216,73 @@
         <div class="export-preview" id="exportPreview" style="display: none;">
           <pre class="export-preview-text" id="exportPreviewText"></pre>
         </div>
+      </div>
+    </section>
+
+    <!-- 知识图谱 -->
+    <section class="tab-panel" id="tab-graph">
+      <!-- 子视图切换 -->
+      <div class="graph-sub-tabs">
+        <button class="graph-sub-btn active" data-view="topics">📅 每日主题</button>
+        <button class="graph-sub-btn" data-view="timeline">📈 时间线</button>
+        <button class="graph-sub-btn" data-view="knowledge">🕸️ 知识图谱</button>
+      </div>
+
+      <!-- 范围选择 -->
+      <div class="graph-scope">
+        <button class="scope-btn active" data-scope="today">今日</button>
+        <button class="scope-btn" data-scope="week">本周</button>
+        <button class="scope-btn" data-scope="month">本月</button>
+        <button class="scope-btn" data-scope="custom">自定义</button>
+        <div class="scope-custom" id="graphCustomRange" style="display:none;">
+          <input type="date" id="graphDateFrom" class="date-input date-sm">
+          <span>→</span>
+          <input type="date" id="graphDateTo" class="date-input date-sm">
+        </div>
+      </div>
+
+      <div class="graph-actions-bar">
+        <button class="btn btn-ai" id="graphGenerateBtn">✨ 生成分析</button>
+        <select id="graphDirection" class="filter-select filter-sm" title="图谱方向">
+          <option value="TD">↓ 上下</option>
+          <option value="LR">→ 左右</option>
+        </select>
+      </div>
+
+      <!-- 子视图① 每日主题 -->
+      <div class="graph-view active" id="view-topics">
+        <div class="graph-placeholder">
+          <div class="empty-icon">📅</div>
+          <p>点击「生成分析」提取每日学习主题</p>
+          <p class="empty-sub">LLM 会自动分析对话并提炼主题、标签、深度</p>
+        </div>
+      </div>
+
+      <!-- 子视图② 时间线 -->
+      <div class="graph-view" id="view-timeline">
+        <div class="graph-placeholder">
+          <div class="empty-icon">📈</div>
+          <p>生成分析后可查看学习时间线</p>
+          <p class="empty-sub">Mermaid Timeline 可视化你的学习旅程</p>
+        </div>
+      </div>
+
+      <!-- 子视图③ 知识图谱 -->
+      <div class="graph-view" id="view-knowledge">
+        <div class="graph-placeholder">
+          <div class="empty-icon">🕸️</div>
+          <p>生成分析后可查看知识图谱</p>
+          <p class="empty-sub">实体、技术点、因果关系一览无余</p>
+        </div>
+      </div>
+
+      <!-- 底部操作栏 -->
+      <div class="graph-toolbar" id="graphToolbar" style="display:none;">
+        <button class="btn-icon-sm" id="graphCopyMermaid" title="复制 Mermaid 代码">📋 代码</button>
+        <button class="btn-icon-sm" id="graphDownloadSvg" title="下载 SVG">📥 SVG</button>
+        <button class="btn-icon-sm" id="graphZoomIn" title="放大">🔍+</button>
+        <button class="btn-icon-sm" id="graphZoomOut" title="缩小">🔍−</button>
+        <button class="btn-icon-sm" id="graphZoomReset" title="重置缩放">↺</button>
       </div>
     </section>
 
