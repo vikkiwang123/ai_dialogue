@@ -377,6 +377,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // 上下文导出：跨日期查询+时间聚类
+  if (request.type === 'GET_CONTEXT_MESSAGES') {
+    getContextMessages(request.options)
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   // 获取平台健康状态
   if (request.type === 'GET_PLATFORM_STATUS') {
     getPlatformStatus()
@@ -413,6 +421,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // 内容脚本心跳
   if (request.type === 'CONTENT_SCRIPT_ALIVE') {
     sendResponse({ success: true });
+    return true;
+  }
+
+  // 上下文导出：跨日期批量查询 + 按平台/时间聚类
+  if (request.type === 'GET_CONTEXT_MESSAGES') {
+    getContextMessages(request.options)
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
     return true;
   }
 });
@@ -568,6 +584,123 @@ function generateExcerpt(text, keyword, radius) {
   excerpt += text.substring(start, end);
   if (end < text.length) excerpt += '...';
   return excerpt;
+}
+
+// ============================================
+// 上下文导出：跨日期查询 + 按平台/时间聚类
+// ============================================
+async function getContextMessages(options = {}) {
+  const { dateFrom, dateTo, platforms = [], keyword = '', sessionGapMinutes = 30 } = options;
+
+  if (!dateFrom || !dateTo) throw new Error('请选择日期范围');
+
+  return new Promise(resolve => {
+    chrome.storage.local.get(null, items => {
+      // 1. 收集日期范围内的所有消息
+      let allMessages = [];
+      const dateKeys = Object.keys(items)
+        .filter(k => k.startsWith('messages_'))
+        .sort();
+
+      for (const key of dateKeys) {
+        const date = key.replace('messages_', '');
+        if (date < dateFrom || date > dateTo) continue;
+        const messages = items[key] || [];
+        messages.forEach(m => { m._date = date; });
+        allMessages = allMessages.concat(messages);
+      }
+
+      // 2. 按平台过滤
+      if (platforms.length > 0) {
+        allMessages = allMessages.filter(m => platforms.includes(m.platform));
+      }
+
+      // 3. 按关键词过滤
+      if (keyword.trim()) {
+        const kws = keyword.toLowerCase().trim().split(/\s+/);
+        allMessages = allMessages.filter(m => {
+          const content = (m.content || '').toLowerCase();
+          return kws.every(kw => content.includes(kw));
+        });
+      }
+
+      // 4. 按时间排序
+      allMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      // 5. 按平台分组，每个平台内按时间聚类（session gap）
+      const gapMs = sessionGapMinutes * 60 * 1000;
+      const platformGroups = {};
+
+      allMessages.forEach(msg => {
+        const p = msg.platform || 'unknown';
+        if (!platformGroups[p]) platformGroups[p] = [];
+        platformGroups[p].push(msg);
+      });
+
+      const result = {};
+      for (const [platform, msgs] of Object.entries(platformGroups)) {
+        const sessions = [];
+        let currentSession = null;
+
+        msgs.forEach(msg => {
+          const ts = new Date(msg.timestamp).getTime();
+
+          if (!currentSession) {
+            // 新 session
+            currentSession = {
+              startTime: msg.timestamp,
+              endTime: msg.timestamp,
+              messages: [msg]
+            };
+          } else {
+            const lastTs = new Date(currentSession.endTime).getTime();
+            if (ts - lastTs > gapMs) {
+              // 时间间隔超过阈值 → 结束当前 session，开始新的
+              sessions.push(currentSession);
+              currentSession = {
+                startTime: msg.timestamp,
+                endTime: msg.timestamp,
+                messages: [msg]
+              };
+            } else {
+              // 继续当前 session
+              currentSession.endTime = msg.timestamp;
+              currentSession.messages.push(msg);
+            }
+          }
+        });
+
+        if (currentSession) sessions.push(currentSession);
+
+        // 添加 session 元数据
+        result[platform] = sessions.map((s, idx) => ({
+          sessionIndex: idx + 1,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          messageCount: s.messages.length,
+          wordCount: s.messages.reduce((sum, m) => sum + (m.content || '').length, 0),
+          messages: s.messages.map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            timestamp: m.timestamp,
+            platform: m.platform,
+            date: m._date
+          }))
+        }));
+      }
+
+      // 6. 汇总统计
+      const totalMessages = allMessages.length;
+      const totalWords = allMessages.reduce((sum, m) => sum + (m.content || '').length, 0);
+      const totalSessions = Object.values(result).reduce((sum, sessions) => sum + sessions.length, 0);
+
+      resolve({
+        platforms: result,
+        stats: { totalMessages, totalWords, totalSessions, dateFrom, dateTo }
+      });
+    });
+  });
 }
 
 // ============================================

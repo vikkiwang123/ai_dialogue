@@ -31,6 +31,7 @@
     <button class="tab-btn active" data-tab="dashboard">📊 概览</button>
     <button class="tab-btn" data-tab="messages">💬 消息</button>
     <button class="tab-btn" data-tab="search">🔍 搜索</button>
+    <button class="tab-btn" data-tab="export">📦 导出</button>
     <button class="tab-btn" data-tab="summary">🧠 总结</button>
   </nav>
 
@@ -150,6 +151,69 @@
           <div class="empty-icon">🔍</div>
           <p>输入关键词搜索所有对话记录</p>
           <p class="empty-sub">支持多个关键词，用空格分隔</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 上下文导出 -->
+    <section class="tab-panel" id="tab-export">
+      <!-- 第一步：筛选 -->
+      <div class="export-filter section-card">
+        <h3>🎯 筛选对话</h3>
+        <div class="export-dates">
+          <div class="export-date-field">
+            <label>开始日期</label>
+            <input type="date" id="exportDateFrom" class="date-input">
+          </div>
+          <span class="date-arrow">→</span>
+          <div class="export-date-field">
+            <label>结束日期</label>
+            <input type="date" id="exportDateTo" class="date-input">
+          </div>
+        </div>
+        <div class="export-platforms" id="exportPlatforms">
+          <label class="platform-check"><input type="checkbox" value="chatgpt" checked><span>ChatGPT</span></label>
+          <label class="platform-check"><input type="checkbox" value="claude" checked><span>Claude</span></label>
+          <label class="platform-check"><input type="checkbox" value="gemini" checked><span>Gemini</span></label>
+          <label class="platform-check"><input type="checkbox" value="copilot" checked><span>Copilot</span></label>
+          <label class="platform-check"><input type="checkbox" value="deepseek" checked><span>DeepSeek</span></label>
+          <label class="platform-check"><input type="checkbox" value="perplexity" checked><span>Perplexity</span></label>
+        </div>
+        <div class="export-keyword-row">
+          <input type="text" id="exportKeyword" class="search-input export-keyword" placeholder="关键词过滤（可选）">
+          <button class="btn btn-ai btn-query" id="exportQueryBtn">🔍 查询</button>
+        </div>
+      </div>
+
+      <!-- 第二步：结果（按平台 → 会话聚类） -->
+      <div class="export-results" id="exportResults">
+        <div class="empty-hint">
+          <div class="empty-icon">📦</div>
+          <p>选择日期范围和平台后点击「查询」</p>
+          <p class="empty-sub">对话会按平台和时间自动聚类</p>
+        </div>
+      </div>
+
+      <!-- 第三步：导出操作（查询后显示） -->
+      <div class="export-actions" id="exportActions" style="display: none;">
+        <div class="export-stats" id="exportStats"></div>
+        <div class="export-format">
+          <label class="radio-label"><input type="radio" name="exportFormat" value="conversation" checked> 对话格式（粘贴到大模型）</label>
+          <label class="radio-label"><input type="radio" name="exportFormat" value="markdown"> Markdown（带时间戳）</label>
+          <label class="radio-label"><input type="radio" name="exportFormat" value="compact"> 精简格式（省token）</label>
+        </div>
+        <div class="export-options">
+          <label class="check-label"><input type="checkbox" id="exportAddGuide" checked> 添加引导语</label>
+        </div>
+        <div class="export-buttons">
+          <button class="btn btn-ai" id="exportCopyBtn">📋 复制到剪贴板</button>
+          <button class="btn btn-outline btn-sm" id="exportDownloadBtn">📥 下载</button>
+        </div>
+        <div class="export-preview-toggle">
+          <button class="btn-link" id="exportPreviewToggle">👁 预览导出内容</button>
+        </div>
+        <div class="export-preview" id="exportPreview" style="display: none;">
+          <pre class="export-preview-text" id="exportPreviewText"></pre>
         </div>
       </div>
     </section>
