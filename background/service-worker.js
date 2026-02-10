@@ -1140,55 +1140,97 @@ chrome.notifications.onClicked.addListener(notificationId => {
 async function saveMessage(data) {
   const today = getLocalDateStr();
   const key = `messages_${today}`;
+  const now = Date.now();
+  const TIME_WINDOW_MS = 5000; // 5秒时间窗口
 
   return new Promise((resolve, reject) => {
     chrome.storage.local.get([key], result => {
       const messages = result[key] || [];
       const newContent = (data.content || '').trim();
-      const newNorm = newContent.replace(/\s+/g, ' ').substring(0, 200);
+      const newNorm = newContent.replace(/\s+/g, ' ').toLowerCase();
 
       // 1. 完全相同的消息 → 跳过
       const exactDup = messages.some(msg =>
         msg.id === data.id ||
-        (msg.content === newContent && msg.role === data.role)
+        (msg.content === newContent && msg.role === data.role && msg.platform === data.platform)
       );
       if (exactDup) { resolve(); return; }
 
-      // 2. 前缀检测：如果新消息是某条旧消息的更长版本 → 替换旧的
-      //    或者旧消息是新消息的子串 → 替换旧的（流式AB→ABC→ABCD场景）
       let replaced = false;
-      for (let i = 0; i < messages.length; i++) {
-        const oldContent = (messages[i].content || '').trim();
-        const oldNorm = oldContent.replace(/\s+/g, ' ').substring(0, 200);
 
-        if (messages[i].role !== data.role) continue;
+      // 2. 相同ID + 时间窗口内 → 直接替换（流式输出时ID可能不变但内容增长）
+      if (data.id) {
+        for (let i = 0; i < messages.length; i++) {
+          if (messages[i].id === data.id) {
+            const timeDiff = now - (new Date(messages[i].timestamp).getTime() || 0);
+            if (timeDiff < TIME_WINDOW_MS) {
+              // 相同ID且在时间窗口内，取更长的内容
+              if (newContent.length >= messages[i].content.length) {
+                console.log('[AI监控] ♻️ 更新同ID消息:', messages[i].content.substring(0, 40), '→', newContent.substring(0, 40));
+                messages[i] = { ...messages[i], ...data, wordCount: newContent.length };
+                replaced = true;
+              } else {
+                resolve(); return; // 保留更长的
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // 3. 前缀检测：流式输出场景（AB→ABC→ABCD）
+      //    检查同平台、同角色、时间窗口内的消息
+      if (!replaced) { // 如果步骤2已经替换，跳过
+        for (let i = messages.length - 1; i >= 0; i--) {
+        const oldMsg = messages[i];
+        const oldContent = (oldMsg.content || '').trim();
+        const oldNorm = oldContent.replace(/\s+/g, ' ').toLowerCase();
+
+        // 必须同平台、同角色
+        if (oldMsg.platform !== data.platform || oldMsg.role !== data.role) continue;
+
+        // 时间窗口检查：只检查最近5秒内的消息
+        const oldTime = new Date(oldMsg.timestamp).getTime() || 0;
+        const timeDiff = now - oldTime;
+        if (timeDiff > TIME_WINDOW_MS) continue; // 超过时间窗口，跳过
 
         // 新内容包含旧内容（旧的是新的前缀）→ 替换
-        if (newContent.length > oldContent.length && newContent.startsWith(oldContent.substring(0, Math.min(oldContent.length, 100)))) {
-          console.log('[AI监控] ♻️ 替换流式残留:', oldContent.substring(0, 40), '→', newContent.substring(0, 40));
-          messages[i] = { ...messages[i], ...data, wordCount: newContent.length };
-          replaced = true;
-          break;
+        if (newContent.length > oldContent.length) {
+          // 检查前80%的旧内容是否是新内容的前缀（允许末尾有差异）
+          const prefixLen = Math.floor(oldContent.length * 0.8);
+          if (prefixLen > 10 && newContent.substring(0, prefixLen) === oldContent.substring(0, prefixLen)) {
+            console.log('[AI监控] ♻️ 替换流式残留:', oldContent.substring(0, 40), '→', newContent.substring(0, 40));
+            messages[i] = { ...oldMsg, ...data, wordCount: newContent.length };
+            replaced = true;
+            break;
+          }
         }
 
         // 旧内容包含新内容（新的是旧的前缀）→ 跳过，保留更长的
-        if (oldContent.length >= newContent.length && oldContent.startsWith(newContent.substring(0, Math.min(newContent.length, 100)))) {
-          resolve(); return;
+        if (oldContent.length >= newContent.length) {
+          const prefixLen = Math.floor(newContent.length * 0.8);
+          if (prefixLen > 10 && oldContent.substring(0, prefixLen) === newContent.substring(0, prefixLen)) {
+            resolve(); return; // 保留更长的旧消息
+          }
         }
 
-        // 归一化前缀匹配（处理空白差异）
-        if (newNorm.length > 5 && oldNorm.length > 5) {
-          if (newNorm.startsWith(oldNorm) || oldNorm.startsWith(newNorm)) {
+        // 归一化前缀匹配（处理空白/大小写差异）
+        if (newNorm.length > 10 && oldNorm.length > 10) {
+          const minLen = Math.min(newNorm.length, oldNorm.length);
+          const prefixLen = Math.floor(minLen * 0.8);
+          if (prefixLen > 10 && newNorm.substring(0, prefixLen) === oldNorm.substring(0, prefixLen)) {
             if (newContent.length > oldContent.length) {
-              messages[i] = { ...messages[i], ...data, wordCount: newContent.length };
+              console.log('[AI监控] ♻️ 归一化匹配替换:', oldContent.substring(0, 40), '→', newContent.substring(0, 40));
+              messages[i] = { ...oldMsg, ...data, wordCount: newContent.length };
               replaced = true;
+            } else {
+              resolve(); return; // 保留更长的
             }
-            // 否则跳过（保留更长的）
-            if (!replaced) { resolve(); return; }
             break;
           }
         }
       }
+      } // 关闭 if (!replaced)
 
       if (!replaced) {
         messages.push(data);

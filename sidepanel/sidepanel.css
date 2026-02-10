@@ -535,6 +535,7 @@ body {
 }
 .conv-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 .conv-card.expanded { border-color: #667eea40; }
+.conv-card.has-matched { border-left: 3px solid #ffa726; }
 
 .conv-header {
   display: flex;
@@ -611,6 +612,27 @@ body {
 
 .conv-msg.user { border-left: 3px solid #4caf50; }
 .conv-msg.assistant { border-left: 3px solid #667eea; }
+.conv-msg.matched {
+  background: #fff8e1;
+  border-left-width: 4px;
+  border-left-color: #ffa726;
+}
+.match-badge {
+  font-size: 10px;
+  background: #ffa726;
+  color: white;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 6px;
+}
+.match-conv-badge {
+  font-size: 10px;
+  background: #ffa726;
+  color: white;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: auto;
+}
 
 .conv-msg-body {
   flex: 1;

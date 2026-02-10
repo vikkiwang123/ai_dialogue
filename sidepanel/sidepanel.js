@@ -377,31 +377,82 @@ function loadMessages() {
   searchKeywords = query.length >= 2 ? query.toLowerCase().split(/\s+/) : [];
 
   if (query.length >= 2) {
-    // 搜索模式：跨日期搜索
+    // 搜索模式：跨日期搜索，但显示完整对话上下文
     container.innerHTML = '<div class="loading-ai"><div class="loading-spinner"></div><p>搜索中...</p></div>';
     chrome.runtime.sendMessage({
       type: 'SEARCH_MESSAGES',
       query,
-      options: { platform: platformFilter, role: roleFilter, maxResults: 100 }
-    }, (response) => {
+      options: { platform: platformFilter, role: roleFilter, maxResults: 200 }
+    }, async (response) => {
       if (chrome.runtime.lastError || !response || !response.success) {
         container.innerHTML = '<div class="empty-hint">搜索失败</div>';
         return;
       }
-      const results = response.results || [];
-      currentMessages = results;
-      if (results.length === 0) {
+      const matchedResults = response.results || [];
+      if (matchedResults.length === 0) {
         container.innerHTML = '<div class="empty-hint"><div class="empty-icon">😕</div><p>没有找到匹配结果</p></div>';
         return;
       }
-      // 按日期分组 → 每组内聚类
-      const byDate = {};
-      results.forEach(msg => {
+
+      // 收集匹配消息的日期+平台组合
+      const datePlatformSet = new Set();
+      const matchedMsgIds = new Set(); // 用于标记哪些消息是匹配的
+      matchedResults.forEach(msg => {
         const d = msg.date || '未知';
-        if (!byDate[d]) byDate[d] = [];
-        byDate[d].push(msg);
+        const key = `${d}|${msg.platform}`;
+        datePlatformSet.add(key);
+        matchedMsgIds.add(msg.id || `${msg.timestamp}_${msg.role}_${msg.platform}`);
       });
-      renderGroupedConversations(byDate, container);
+
+      // 加载每个日期+平台组合的完整消息（不只是匹配的）
+      const byDate = {};
+      const loadPromises = Array.from(datePlatformSet).map(key => {
+        const [date, platform] = key.split('|');
+        return new Promise(resolve => {
+          chrome.runtime.sendMessage({ type: 'GET_MESSAGES', date }, (resp) => {
+            if (resp && resp.success && resp.messages) {
+              // 过滤平台（如果指定了平台筛选）
+              let msgs = resp.messages;
+              if (platformFilter !== 'all') msgs = msgs.filter(m => m.platform === platform);
+              if (roleFilter !== 'all') msgs = msgs.filter(m => m.role === roleFilter);
+              
+              // 标记匹配的消息
+              msgs.forEach(msg => {
+                const msgId = msg.id || `${msg.timestamp}_${msg.role}_${msg.platform}`;
+                msg._isMatched = matchedMsgIds.has(msgId);
+                if (msg._isMatched) {
+                  // 从matchedResults中获取excerpt
+                  const matched = matchedResults.find(m => {
+                    const mId = m.id || `${m.timestamp}_${m.role}_${m.platform}`;
+                    return mId === msgId;
+                  });
+                  if (matched && matched.excerpt) msg._excerpt = matched.excerpt;
+                }
+              });
+
+              if (!byDate[date]) byDate[date] = [];
+              byDate[date].push(...msgs);
+            }
+            resolve();
+          });
+        });
+      });
+
+      await Promise.all(loadPromises);
+
+      // 去重（同一条消息可能出现在多个日期，但实际不会）
+      Object.keys(byDate).forEach(date => {
+        const seen = new Set();
+        byDate[date] = byDate[date].filter(msg => {
+          const id = msg.id || `${msg.timestamp}_${msg.role}_${msg.platform}`;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+      });
+
+      currentMessages = Object.values(byDate).flat();
+      renderGroupedConversations(byDate, container, true); // 第三个参数表示搜索模式
     });
   } else {
     // 日期模式：单日加载
@@ -429,8 +480,11 @@ function loadMessages() {
 
 /**
  * 渲染按日期分组的聚类对话
+ * @param {Object} byDate - 按日期分组的消息对象
+ * @param {HTMLElement} container - 容器元素
+ * @param {boolean} isSearchMode - 是否为搜索模式（需要高亮匹配消息）
  */
-function renderGroupedConversations(byDate, container) {
+function renderGroupedConversations(byDate, container, isSearchMode = false) {
   let html = '';
   let globalMsgIdx = 0;
   const renderedMessages = []; // 按渲染顺序重建消息数组
@@ -450,8 +504,12 @@ function renderGroupedConversations(byDate, container) {
       const convId = `conv-${date}-${cIdx}`;
       const platformIcon = getPlatformIcon(conv.platform);
       const timeRange = formatTime(conv.startTime) + (conv.startTime !== conv.endTime ? ' → ' + formatTime(conv.endTime) : '');
+      
+      // 搜索模式下，如果对话包含匹配消息，自动展开
+      const hasMatched = isSearchMode && conv.messages.some(m => m._isMatched);
+      const toggleIcon = hasMatched ? '▼' : '▶';
 
-      html += `<div class="conv-card" data-conv-id="${convId}">`;
+      html += `<div class="conv-card ${hasMatched ? 'expanded' : ''}" data-conv-id="${convId}">`;
 
       // 对话头部（可折叠）
       html += `<div class="conv-header" data-toggle="${convId}">`;
@@ -468,22 +526,35 @@ function renderGroupedConversations(byDate, container) {
             <span class="conv-platform-name">${getPlatformName(conv.platform)}</span>
             <span class="conv-time">${timeRange}</span>
             <span class="conv-count">${conv.messageCount}条 · ${formatNumber(conv.wordCount)}字</span>
+            ${hasMatched ? '<span class="match-conv-badge">🔍 包含匹配</span>' : ''}
           </div>
         </div>
-        <span class="conv-toggle-icon">▶</span>
+        <span class="conv-toggle-icon">${toggleIcon}</span>
       </div>`;
 
-      // 对话消息体（默认折叠）
-      html += `<div class="conv-body" id="${convId}" style="display:none;">`;
+      // 对话消息体（搜索模式下包含匹配的对话自动展开）
+      html += `<div class="conv-body" id="${convId}" style="display:${hasMatched ? 'block' : 'none'};">`;
+      
       conv.messages.forEach(msg => {
         renderedMessages.push(msg); // 同步渲染顺序
         const roleIcon = msg.role === 'user' ? '👤' : '🤖';
-        const isSearchMode = searchKeywords.length > 0;
-        const contentHtml = isSearchMode
-          ? highlightKeywords(escapeHtml(msg.excerpt || (msg.content || '').substring(0, 200)), searchKeywords)
-          : renderMarkdown(msg.content || '');
+        const msgIsMatched = isSearchMode && msg._isMatched;
+        
+        let contentHtml;
+        if (isSearchMode) {
+          if (msgIsMatched) {
+            // 匹配的消息：使用excerpt并高亮关键词
+            const excerpt = msg._excerpt || msg.excerpt || (msg.content || '').substring(0, 200);
+            contentHtml = highlightKeywords(escapeHtml(excerpt), searchKeywords);
+          } else {
+            // 上下文消息：显示完整内容（不截断），但不高亮
+            contentHtml = renderMarkdown(msg.content || '');
+          }
+        } else {
+          contentHtml = renderMarkdown(msg.content || '');
+        }
 
-        html += `<div class="conv-msg ${msg.role}" data-global-idx="${globalMsgIdx}">`;
+        html += `<div class="conv-msg ${msg.role} ${msgIsMatched ? 'matched' : ''}" data-global-idx="${globalMsgIdx}">`;
         if (selectMode) {
           html += `<label class="msg-select-check" onclick="event.stopPropagation()">
             <input type="checkbox" class="msg-select-cb" data-global-idx="${globalMsgIdx}">
@@ -493,9 +564,10 @@ function renderGroupedConversations(byDate, container) {
           <div class="conv-msg-body">
             <div class="conv-msg-header">
               <span class="conv-msg-role">${roleIcon} ${msg.role === 'user' ? '我' : 'AI'}</span>
+              ${msgIsMatched ? '<span class="match-badge">🔍 匹配</span>' : ''}
               <span class="conv-msg-time">${formatTime(msg.timestamp)}</span>
             </div>
-            <div class="conv-msg-content ${isSearchMode ? '' : 'md-body'}">${contentHtml}</div>
+            <div class="conv-msg-content ${isSearchMode && !msgIsMatched ? 'md-body' : ''}">${contentHtml}</div>
           </div>
         </div>`;
         globalMsgIdx++;
