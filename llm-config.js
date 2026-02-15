@@ -7,9 +7,9 @@ const LLM_CONFIG = {
 
   // ------------------------------------------
   // 当前使用的模型供应商（切换供应商只需改这里）
-  // 可选值: 'moonshot', 'openai', 'deepseek', 'zhipu', 'custom'
+  // 可选值: 'moonshot', 'openai', 'deepseek', 'zhipu', 'minimax', 'custom'
   // ------------------------------------------
-  provider: 'moonshot',
+  provider: 'minimax',
 
   // ------------------------------------------
   // 各供应商预设配置
@@ -59,6 +59,15 @@ const LLM_CONFIG = {
       defaultModel: 'glm-4-flash'
     },
 
+    minimax: {
+      name: 'MiniMax',
+      apiUrl: 'https://api.minimax.chat/v1/text/chatcompletion_v2',
+      models: [
+        { id: 'MiniMax-M2.5', name: 'MiniMax-M2.5', contextLength: 100000 }
+      ],
+      defaultModel: 'MiniMax-M2.5'
+    },
+
     custom: {
       name: '自定义（兼容OpenAI格式）',
       apiUrl: '',
@@ -75,7 +84,7 @@ const LLM_CONFIG = {
   model: '',
 
   // ------------------------------------------
-  // API Key（建议通过设置页面配置，此处为默认值）
+  // API Key（通过设置页面配置，此处不要写死）
   // ------------------------------------------
   apiKey: '',
 
